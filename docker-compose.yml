@@ -1,0 +1,24 @@
+services:
+  encore:
+    image: ghcr.io/eliasthecactus/encore:latest
+    container_name: encore
+    ports:
+      - "8080:8080"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Zurich
+      # - ENCORE_MODEL=htdemucs_ft      # slower, cleaner separation
+      # - ENCORE_UPDATE_YTDLP=false     # skip the yt-dlp update on start
+    volumes:
+      - ./config:/config     # config.json, encore.db, AI models, backgrounds, cookies.txt
+      - ./library:/library   # processed songs (stems, covers, videos)
+    restart: unless-stopped
+    # NVIDIA GPU (needs an image built with --build-arg TORCH_INDEX=cu128):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]

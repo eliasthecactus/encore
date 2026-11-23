@@ -1,0 +1,8 @@
+fastapi>=0.120
+uvicorn[standard]>=0.38
+python-multipart>=0.0.20
+requests>=2.32
+ytmusicapi>=1.11
+yt-dlp[default]>=2026.10.26
+demucs==4.0.1
+# torch / torchaudio are installed separately (CPU wheels in the Dockerfile)

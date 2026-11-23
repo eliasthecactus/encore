@@ -1,0 +1,174 @@
+import { useEffect, useRef, useState } from "react";
+import { api, fmtBytes, type Background, type BackgroundMode, type ConfigResponse, type Settings, type SystemInfo } from "../api";
+import { Icon } from "./Icon";
+
+interface Props {
+  config: ConfigResponse;
+  backgrounds: Background[];
+  onSaved: (c: ConfigResponse) => void;
+  onBackgrounds: () => void;
+}
+
+const BG_LABEL: Record<BackgroundMode, string> = {
+  aurora: "Aurora (colours from the cover)",
+  visualizer: "Audio visualizer",
+  cover: "Cover art",
+  video: "Music video",
+  custom: "Your own image or video",
+};
+
+export function SettingsPage({ config, backgrounds, onSaved, onBackgrounds }: Props) {
+  const s = config.settings;
+  const [sys, setSys] = useState<SystemInfo | null>(null);
+  const [saved, setSaved] = useState(false);
+  const file = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    api.system().then(setSys).catch(() => {});
+  }, []);
+
+  const save = async (patch: Partial<Settings>) => {
+    const c = await api.saveConfig(patch);
+    onSaved(c);
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1200);
+  };
+
+  const upload = async (f: File | undefined) => {
+    if (!f) return;
+    const r = await api.uploadBackground(f);
+    onBackgrounds();
+    await save({ custom_background: r.name, default_background: "custom" });
+  };
+
+  return (
+    <div className="page narrow">
+      <div className="toolbar">
+        <h2>Settings</h2>
+        {saved && <span className="pill ready">Saved</span>}
+      </div>
+
+      <section className="panel">
+        <h3>Singing</h3>
+        <label className="field">
+          <span>Vocal level when a song starts <b>{Math.round(s.default_vocals * 100)}%</b></span>
+          <input type="range" min={0} max={1} step={0.05} defaultValue={s.default_vocals}
+            onPointerUp={(e) => save({ default_vocals: Number((e.target as HTMLInputElement).value) })}
+            onKeyUp={(e) => save({ default_vocals: Number((e.target as HTMLInputElement).value) })} />
+        </label>
+        <label className="field">
+          <span>Default background</span>
+          <select value={s.default_background} onChange={(e) => save({ default_background: e.target.value as BackgroundMode })}>
+            {config.backgrounds.map((b) => <option key={b} value={b}>{BG_LABEL[b]}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span>Lyrics size <b>{Math.round(s.lyrics_font_scale * 100)}%</b></span>
+          <input type="range" min={0.6} max={1.6} step={0.05} defaultValue={s.lyrics_font_scale}
+            onPointerUp={(e) => save({ lyrics_font_scale: Number((e.target as HTMLInputElement).value) })} />
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={s.auto_advance} onChange={(e) => save({ auto_advance: e.target.checked })} />
+          <span>Play the next song in the queue automatically</span>
+        </label>
+        <label className="field inline">
+          <span>Countdown before the next song</span>
+          <input type="number" min={0} max={30} value={s.countdown_seconds} onChange={(e) => save({ countdown_seconds: Number(e.target.value) })} />
+          <span className="muted">seconds</span>
+        </label>
+      </section>
+
+      <section className="panel">
+        <h3>Your backgrounds</h3>
+        <p className="muted small">Images or looping videos, saved in the config folder (backgrounds/).</p>
+        <div className="bglist">
+          {backgrounds.map((b) => (
+            <div key={b.name} className={`bgthumb ${s.custom_background === b.name ? "on" : ""}`}>
+              <button onClick={() => save({ custom_background: b.name })} title={b.name}>
+                {b.kind === "video" ? <video src={b.url} muted /> : <img src={b.url} alt="" />}
+              </button>
+              <button className="icon-btn small del" onClick={async () => { await api.deleteBackground(b.name); onBackgrounds(); }} aria-label="Delete">
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+          ))}
+          <button className="bgthumb add" onClick={() => file.current?.click()}>
+            <Icon name="upload" />
+            <span className="small">Upload</span>
+          </button>
+          <input ref={file} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" hidden onChange={(e) => upload(e.target.files?.[0])} />
+        </div>
+      </section>
+
+      <section className="panel">
+        <h3>Processing</h3>
+        <label className="field">
+          <span>Vocal separation model</span>
+          <select value={s.model} onChange={(e) => save({ model: e.target.value })}>
+            {Object.entries(config.models).map(([k, v]) => <option key={k} value={k}>{k}: {v}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span>Device</span>
+          <select value={s.device} onChange={(e) => save({ device: e.target.value })}>
+            <option value="auto">Auto (GPU if available)</option>
+            <option value="cpu">CPU</option>
+            <option value="cuda">NVIDIA GPU (CUDA)</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Stem quality</span>
+          <select value={s.mp3_bitrate} onChange={(e) => save({ mp3_bitrate: Number(e.target.value) })}>
+            {[160, 192, 256, 320].map((b) => <option key={b} value={b}>{b} kbps MP3</option>)}
+          </select>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={s.download_video} onChange={(e) => save({ download_video: e.target.checked })} />
+          <span>Also download the music video as a background</span>
+        </label>
+        <label className="field">
+          <span>Music video resolution</span>
+          <select value={s.video_max_height} onChange={(e) => save({ video_max_height: Number(e.target.value) })}>
+            {[360, 480, 720, 1080].map((h) => <option key={h} value={h}>{h}p</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span>Lyrics sources (in order)</span>
+          <select value={s.lyrics_sources.join(",")} onChange={(e) => save({ lyrics_sources: e.target.value.split(",") })}>
+            <option value="lrclib,ytmusic">LRCLIB, then YouTube Music</option>
+            <option value="ytmusic,lrclib">YouTube Music, then LRCLIB</option>
+            <option value="lrclib">LRCLIB only</option>
+            <option value="ytmusic">YouTube Music only</option>
+          </select>
+        </label>
+      </section>
+
+      {sys && (
+        <section className="panel">
+          <h3>System</h3>
+          <dl className="kv">
+            <dt>Encore</dt><dd>{sys.version}</dd>
+            <dt>yt-dlp</dt><dd>{sys.yt_dlp}</dd>
+            <dt>Separation runs on</dt><dd>{sys.device.toUpperCase()}</dd>
+            <dt>Library size</dt><dd>{fmtBytes(sys.library_bytes)}</dd>
+            <dt>Free disk</dt><dd>{fmtBytes(sys.disk_free_bytes)}</dd>
+            <dt>YouTube cookies</dt><dd>{sys.cookies ? "cookies.txt found" : "none (add cookies.txt to the config folder if downloads get blocked)"}</dd>
+          </dl>
+        </section>
+      )}
+
+      <section className="panel">
+        <h3>Keyboard on the stage</h3>
+        <dl className="kv keys">
+          <dt>Space</dt><dd>Play / pause</dd>
+          <dt>← →</dt><dd>Seek 5 seconds</dd>
+          <dt>↑ ↓</dt><dd>Vocals ±10%</dd>
+          <dt>[ ]</dt><dd>Lyrics earlier / later</dd>
+          <dt>B</dt><dd>Next background</dd>
+          <dt>N</dt><dd>Next song in queue</dd>
+          <dt>F</dt><dd>Fullscreen</dd>
+        </dl>
+      </section>
+    </div>
+  );
+}
