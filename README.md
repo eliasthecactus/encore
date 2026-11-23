@@ -11,20 +11,54 @@ Self-hosted karaoke for any song. Search YouTube Music, and Encore downloads the
 
 ## Run it
 
+Both variants use the latest release from GHCR: `ghcr.io/eliasthecactus/encore:latest` (amd64 and arm64).
+
+### Docker run
+
 ```bash
-docker run -d --name encore -p 8080:8080 \
-  -e PUID=1000 -e PGID=1000 \
-  -v ./config:/config -v ./library:/library \
+docker run -d --name encore \
+  -p 8080:8080 \
+  -e PUID=1000 -e PGID=1000 -e TZ=Europe/Zurich \
+  -v "$(pwd)/config:/config" \
+  -v "$(pwd)/library:/library" \
+  --restart unless-stopped \
   ghcr.io/eliasthecactus/encore:latest
 ```
 
-or with the included [docker-compose.yml](docker-compose.yml):
+### Docker Compose
+
+Save this as `docker-compose.yml` (same as the [one in this repo](docker-compose.yml)):
+
+```yaml
+services:
+  encore:
+    image: ghcr.io/eliasthecactus/encore:latest
+    container_name: encore
+    ports:
+      - "8080:8080"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Zurich
+    volumes:
+      - ./config:/config     # settings, SQLite database, AI models, backgrounds
+      - ./library:/library   # processed songs
+    restart: unless-stopped
+```
+
+then start it:
 
 ```bash
 docker compose up -d
 ```
 
-Open http://localhost:8080 on the machine connected to the TV, and the same address (with the server's IP) on phones.
+Update to a new release:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Open http://localhost:8080 on the machine connected to the TV, and the same address (with the server's IP) on phones. Set `PUID`/`PGID` to your user (`id -u` / `id -g`) so the files in `config` and `library` belong to you.
 
 ### Folders
 
