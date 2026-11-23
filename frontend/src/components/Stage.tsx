@@ -14,6 +14,7 @@ export interface NowPlaying {
 
 interface Props {
   now: NowPlaying | null;
+  online: boolean;
   settings: Settings;
   queue: QueueEntry[];
   backgrounds: Bg[];
@@ -30,7 +31,7 @@ const BG_OPTIONS: { mode: BackgroundMode; icon: string; label: string }[] = [
   { mode: "custom", icon: "image", label: "Your background" },
 ];
 
-export function Stage({ now, settings, queue, backgrounds, onPlayNext, onIdle, onChrome }: Props) {
+export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, onIdle, onChrome }: Props) {
   const [song, setSong] = useState<SongDetail | null>(null);
   const [player, setPlayer] = useState<StemPlayer | null>(null);
   const [loadPct, setLoadPct] = useState(0);
@@ -82,7 +83,7 @@ export function Stage({ now, settings, queue, backgrounds, onPlayNext, onIdle, o
         setPlayer(p);
         await p.play();
         setPlaying(true);
-        void api.played(s.id);
+        void api.played(s.id).catch(() => {});
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       }
@@ -160,7 +161,7 @@ export function Stage({ now, settings, queue, backgrounds, onPlayNext, onIdle, o
       offsetRef.current = v;
       setOffset(v);
       window.clearTimeout(saveOffset.current);
-      saveOffset.current = window.setTimeout(() => void api.patch(song.id, { lyrics_offset: v }), 600);
+      saveOffset.current = window.setTimeout(() => void api.patch(song.id, { lyrics_offset: v }).catch(() => {}), 600);
     },
     [song],
   );
@@ -224,7 +225,7 @@ export function Stage({ now, settings, queue, backgrounds, onPlayNext, onIdle, o
   if (!now) {
     return (
       <div className="stage" onMouseMove={poke}>
-        <Background mode={bg === "video" ? "aurora" : bg} cover="" video={null} custom={custom} player={null} palette={DEFAULT_PALETTE} />
+        <Background mode={bg === "video" ? "aurora" : bg} cover="" video={null} custom={online ? custom : null} player={null} palette={DEFAULT_PALETTE} />
         <div className="stage-empty">
           <div className="hero-word">encore</div>
           <p>Pick a song from the library or search for one. Phones on the same network can open this page and add songs to the queue.</p>
@@ -248,7 +249,7 @@ export function Stage({ now, settings, queue, backgrounds, onPlayNext, onIdle, o
 
   return (
     <div className={`stage ${chrome ? "" : "chrome-hidden"}`} onMouseMove={poke} onTouchStart={poke}>
-      <Background mode={bg} cover={song?.cover ?? ""} video={song?.video} custom={custom} player={player} palette={palette} />
+      <Background mode={bg} cover={song?.cover ?? ""} video={online ? song?.video : null} custom={online ? custom : null} player={player} palette={palette} />
 
       {song && player && (
         <Lyrics
@@ -365,7 +366,7 @@ export function Stage({ now, settings, queue, backgrounds, onPlayNext, onIdle, o
 
             <div className="group bgpick" title="Background (b)">
               {BG_OPTIONS.map((o) => {
-                const unavailable = (o.mode === "video" && !song?.video) || (o.mode === "custom" && !custom);
+                const unavailable = (o.mode === "video" && (!song?.video || !online)) || (o.mode === "custom" && (!custom || !online));
                 return (
                   <button
                     key={o.mode}
@@ -386,9 +387,11 @@ export function Stage({ now, settings, queue, backgrounds, onPlayNext, onIdle, o
               <button className="icon-btn small" onClick={() => changeOffset(0.1)}>+</button>
             </div>
 
-            <button className="icon-btn" onClick={fullscreen} title="Fullscreen (f)">
-              <Icon name="fullscreen" />
-            </button>
+            {document.fullscreenEnabled && (
+              <button className="icon-btn" onClick={fullscreen} title="Fullscreen (f)">
+                <Icon name="fullscreen" />
+              </button>
+            )}
           </div>
         </div>
       )}

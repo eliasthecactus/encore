@@ -5,6 +5,7 @@ Self-hosted karaoke for any song. Search YouTube Music, and Encore downloads the
 - **Any song**: search YouTube Music or paste a YouTube link. Audio comes from yt-dlp, metadata and cover art from YouTube Music.
 - **Vocal slider**: Demucs (Meta's source separation model) splits every song into `vocals` and `instrumental`. Both stems play sample-locked in the browser, the slider is just the vocal volume (0 % = pure karaoke, 30 % = guide vocals).
 - **Synced lyrics**: from [LRCLIB](https://lrclib.net) or YouTube Music, with a fill effect, countdown dots in instrumental breaks and a per-song timing offset. You can paste your own LRC.
+- **Phone friendly, installable, offline**: on phones the app gets a bottom tab bar and touch-sized controls. Install it to the home screen or start menu (Edge, Chrome, Android, iOS Safari). Save songs on a device and they play without a connection to Encore, with lyrics and word timing. Needs https, see [Install as an app](#install-as-an-app).
 - **Word timing**: LRC files only time whole lines, often for a slightly different release. Encore aligns every word on the separated vocal track (torchaudio's MMS_FA model, CPU is fine, about 20 to 60 s per song), so the fill follows the singer and rests in pauses. Lines it is unsure about keep the LRC time, and plain lyrics without timestamps get synced the same way. Latin-script lyrics only for now.
 - **Backgrounds**: aurora (colours taken from the cover), audio visualizer, cover art, the official music video (muted, synced), or your own uploaded image or video.
 - **Party queue**: phones on the same network open the same page, search, and line up with their name. The TV shows who's next and counts down.
@@ -85,6 +86,23 @@ Every key in `config.json` can be overridden the same way (`ENCORE_<KEY>`), and 
 ### Offline
 
 Once songs are in the library, Encore works without internet: stems, covers, music videos and lyrics are stored locally and the web app is bundled. Phones only need the local network. Searching and adding new songs needs internet. Without a connection the container skips the yt-dlp update and starts in a few seconds.
+
+### Install as an app
+
+Encore is a Progressive Web App. Browsers only allow installing it and using it offline over **https** (or on `localhost`), so on your network put it behind a reverse proxy with a certificate:
+
+- **Caddy**, **Nginx Proxy Manager**, **Traefik** or the reverse proxy you already run, pointing at `http://<encore-host>:8080`. A minimal Caddyfile: `karaoke.example.com { reverse_proxy encore:8080 }`.
+- **Tailscale**: `tailscale serve --bg 8080` on the Encore host gives you `https://<host>.<tailnet>.ts.net` with a valid certificate, also on your phone.
+
+Over plain http on a LAN address everything else works, only "Install" and "Save on this device" are missing.
+
+Then:
+
+- **Edge / Chrome (desktop)**: the install icon in the address bar, or the menu: Apps > Install Encore. Settings in Encore also has an Install button.
+- **Android**: menu > Install app (or Add to Home screen).
+- **iPhone / iPad**: Safari > Share > Add to Home Screen.
+
+**Offline**: the app itself and the last known library open without a connection. Songs you save with "Save on this device" (song menu in the library) play fully offline, stems, cover, lyrics and word timing included, about 15 MB per song. Search, the queue and settings need the connection to Encore. Settings > This device shows what is stored and removes it.
 
 ### How long does a song take?
 

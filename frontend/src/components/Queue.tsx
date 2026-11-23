@@ -3,12 +3,13 @@ import { Icon } from "./Icon";
 
 interface Props {
   queue: QueueEntry[];
+  online: boolean;
   onChanged: () => void;
   onStart: () => void;
   onSearch: () => void;
 }
 
-export function Queue({ queue, onChanged, onStart, onSearch }: Props) {
+export function Queue({ queue, online, onChanged, onStart, onSearch }: Props) {
   const move = async (i: number, d: number) => {
     const ids = queue.map((q) => q.id);
     const j = i + d;
@@ -19,6 +20,18 @@ export function Queue({ queue, onChanged, onStart, onSearch }: Props) {
   };
 
   const total = queue.reduce((n, q) => n + (q.duration || 0), 0);
+
+  if (!online) {
+    return (
+      <div className="page center">
+        <div className="empty">
+          <Icon name="cloudOff" size={40} />
+          <h2>The queue needs a connection</h2>
+          <p className="muted">The party queue lives on your Encore server. Connect to the same network to see and add singers.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page">

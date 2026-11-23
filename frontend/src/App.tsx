@@ -7,6 +7,7 @@ import { Queue } from "./components/Queue";
 import { Search } from "./components/Search";
 import { SettingsPage } from "./components/SettingsPage";
 import { Stage, type NowPlaying } from "./components/Stage";
+import { loadSaved, refreshSavedDetails, useOnline, useSaved, watchConnection } from "./offline";
 
 type View = "stage" | "search" | "library" | "queue" | "settings";
 const VIEWS: { id: View; label: string; icon: string }[] = [
@@ -40,7 +41,10 @@ export function App() {
   const [chrome, setChrome] = useState(true);
   const [singerAsk, setSingerAsk] = useState<{ resolve: (v: string | null) => void } | null>(null);
   const [singerName, setSingerName] = useState(storedSinger);
+  const [bootFailed, setBootFailed] = useState(false);
   const playKey = useRef(0);
+  const online = useOnline();
+  const saved = useSaved();
 
   const go = useCallback((v: View) => {
     location.hash = `/${v}`;
@@ -61,18 +65,31 @@ export function App() {
     void refreshQueue();
   }, [refreshSongs, refreshQueue]);
 
-  useEffect(() => {
-    api.config().then(setConfig);
+  const boot = useCallback(() => {
+    setBootFailed(false);
+    api.config().then(setConfig).catch(() => setBootFailed(true));
     refresh();
     void refreshBackgrounds();
   }, [refresh, refreshBackgrounds]);
 
+  useEffect(() => {
+    boot();
+    void loadSaved();
+  }, [boot]);
+
+  // When Encore is unreachable, check back every few seconds and reload everything once it is there.
+  useEffect(() => watchConnection(() => { boot(); void refreshSavedDetails(); }), [boot]);
+  useEffect(() => {
+    if (online) void refreshSavedDetails();
+  }, [online]);
+
   // Poll faster while something is being processed.
   const busy = songs.some((s) => (s.status !== "ready" && s.status !== "error") || (s.status === "ready" && !!s.stage));
   useEffect(() => {
+    if (!online) return;
     const id = window.setInterval(refresh, busy ? 1500 : 5000);
     return () => window.clearInterval(id);
-  }, [refresh, busy]);
+  }, [refresh, busy, online]);
 
   const play = useCallback(
     (songId: string, singer = "") => {
@@ -85,15 +102,19 @@ export function App() {
   );
 
   const playNext = useCallback(async () => {
-    const q = await api.queue();
-    const next = q.find((e) => e.status === "ready");
-    if (!next) {
-      setQueue(q);
-      return;
+    try {
+      const q = await api.queue();
+      const next = q.find((e) => e.status === "ready");
+      if (!next) {
+        setQueue(q);
+        return;
+      }
+      await api.dequeue(next.id);
+      void refreshQueue();
+      play(next.song_id, next.singer);
+    } catch {
+      /* offline: the queue lives on the server */
     }
-    await api.dequeue(next.id);
-    void refreshQueue();
-    play(next.song_id, next.singer);
   }, [play, refreshQueue]);
 
   const askSinger = useCallback(
@@ -115,14 +136,30 @@ export function App() {
   };
 
   if (!config) {
-    return <div className="boot"><div className="hero-word small">encore</div></div>;
+    return (
+      <div className="boot">
+        <div className="hero-word small">encore</div>
+        {bootFailed && (
+          <div className="boot-msg">
+            <p className="muted">Encore is not reachable. Check that you are on the same network as your Encore server.</p>
+            <button className="btn primary" onClick={boot}><Icon name="refresh" size={16} /> Try again</button>
+          </div>
+        )}
+      </div>
+    );
   }
 
   const working = songs.filter((s) => s.status !== "ready" && s.status !== "error").length;
   const onStage = view === "stage";
 
   return (
-    <div className={`app ${onStage ? "on-stage" : ""} ${onStage && !chrome ? "nav-hidden" : ""}`}>
+    <div className={`app ${onStage ? "on-stage" : ""} ${onStage && !chrome ? "nav-hidden" : ""} ${online ? "" : "offline"}`}>
+      {!online && !onStage && (
+        <div className="offline-bar">
+          <Icon name="cloudOff" size={16} />
+          <span>Offline. {Object.keys(saved).length ? "Songs saved on this device still play." : "Save songs for offline use while you are connected."}</span>
+        </div>
+      )}
       <nav className="nav">
         <button className="logo" onClick={() => go("stage")}>
           <span className="logo-mark" />
@@ -145,6 +182,7 @@ export function App() {
           <Stage
             key={now?.key ?? 0}
             now={now}
+            online={online}
             settings={config.settings}
             queue={queue}
             backgrounds={backgrounds}
@@ -153,11 +191,11 @@ export function App() {
             onChrome={setChrome}
           />
         </div>
-        {view === "search" && <Search songs={songs} onPlay={(id) => play(id)} onChanged={refresh} askSinger={askSinger} />}
+        {view === "search" && <Search songs={songs} online={online} onPlay={(id) => play(id)} onChanged={refresh} askSinger={askSinger} />}
         {view === "library" && (
-          <Library songs={songs} models={config.models} onPlay={(id) => play(id)} onChanged={refresh} askSinger={askSinger} onSearch={() => go("search")} />
+          <Library songs={songs} online={online} models={config.models} onPlay={(id) => play(id)} onChanged={refresh} askSinger={askSinger} onSearch={() => go("search")} />
         )}
-        {view === "queue" && <Queue queue={queue} onChanged={refresh} onStart={playNext} onSearch={() => go("search")} />}
+        {view === "queue" && <Queue queue={queue} online={online} onChanged={refresh} onStart={playNext} onSearch={() => go("search")} />}
         {view === "settings" && (
           <SettingsPage config={config} backgrounds={backgrounds} onSaved={setConfig} onBackgrounds={refreshBackgrounds} />
         )}

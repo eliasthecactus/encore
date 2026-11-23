@@ -1,3 +1,5 @@
+import { noteResponse } from "./offline";
+
 export type Status = "queued" | "downloading" | "separating" | "finishing" | "ready" | "error";
 
 export interface SearchResult {
@@ -113,7 +115,14 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     init.body = JSON.stringify(body);
     (init.headers as Record<string, string>)["content-type"] = "application/json";
   }
-  const res = await fetch(path, init);
+  let res: Response;
+  try {
+    res = await fetch(path, init);
+  } catch {
+    noteResponse(null);
+    throw new Error("Encore is not reachable right now");
+  }
+  noteResponse(res);
   if (!res.ok) {
     let msg = res.statusText;
     try {

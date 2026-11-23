@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, fmtBytes, type Background, type BackgroundMode, type ConfigResponse, type Settings, type SystemInfo } from "../api";
+import { offlineCapable, removeAll, useInstall, useSaved } from "../offline";
 import { Icon } from "./Icon";
 
 interface Props {
@@ -42,7 +43,13 @@ export function SettingsPage({ config, backgrounds, onSaved, onBackgrounds }: Pr
   }, []);
 
   const save = async (patch: Partial<Settings>) => {
-    const c = await api.saveConfig(patch);
+    let c: ConfigResponse;
+    try {
+      c = await api.saveConfig(patch);
+    } catch (e) {
+      alert((e as Error).message);
+      return;
+    }
     onSaved(c);
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1200);
@@ -61,6 +68,8 @@ export function SettingsPage({ config, backgrounds, onSaved, onBackgrounds }: Pr
         <h2>Settings</h2>
         {saved && <span className="pill ready">Saved</span>}
       </div>
+
+      <DevicePanel />
 
       <section className="panel">
         <h3>Singing</h3>
@@ -194,5 +203,61 @@ export function SettingsPage({ config, backgrounds, onSaved, onBackgrounds }: Pr
         </dl>
       </section>
     </div>
+  );
+}
+
+/** Install as an app and songs saved on this device. Everything here is per device. */
+function DevicePanel() {
+  const { canPrompt, installed, ios, install } = useInstall();
+  const saved = useSaved();
+  const [quota, setQuota] = useState<{ usage: number; quota: number } | null>(null);
+  const list = Object.values(saved);
+  const bytes = list.reduce((n, s) => n + s.bytes, 0);
+
+  useEffect(() => {
+    navigator.storage?.estimate?.().then((e) => setQuota({ usage: e.usage ?? 0, quota: e.quota ?? 0 })).catch(() => {});
+  }, [list.length]);
+
+  return (
+    <section className="panel">
+      <h3>This device</h3>
+      <div className="row between">
+        <div className="grow">
+          <div>Encore as an app</div>
+          <div className="muted small">
+            {installed
+              ? "Installed. It opens in its own window and starts without the browser."
+              : canPrompt
+                ? "Adds Encore to your home screen or start menu, with its own window."
+                : !offlineCapable
+                  ? "Installing and offline use need Encore over https (or localhost). See \"Install as an app\" in the README."
+                  : ios
+                    ? "In Safari: tap Share, then \"Add to Home Screen\"."
+                    : "Use the browser menu. In Edge: ⋯ > Apps > Install this site as an app."}
+          </div>
+        </div>
+        {canPrompt && !installed && (
+          <button className="btn primary" onClick={() => void install()}><Icon name="install" size={16} /> Install</button>
+        )}
+      </div>
+      {offlineCapable && (
+        <div className="row between">
+          <div className="grow">
+            <div>Songs saved on this device</div>
+            <div className="muted small">
+              {list.length
+                ? `${list.length} song${list.length === 1 ? "" : "s"}, ${fmtBytes(bytes)}. They play without a connection.`
+                : "None yet. Use \"Save on this device\" in a song's menu in the library."}
+              {quota && quota.quota > 0 ? ` Browser storage: ${fmtBytes(quota.usage)} of ${fmtBytes(quota.quota)} used.` : ""}
+            </div>
+          </div>
+          {list.length > 0 && (
+            <button className="btn" onClick={() => confirm("Remove all songs saved on this device?") && void removeAll()}>
+              <Icon name="trash" size={16} /> Remove all
+            </button>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

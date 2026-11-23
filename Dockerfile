@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
 # ---- web app ----------------------------------------------------------------
-FROM node:22-alpine AS web
+# Plain HTML/JS output, so it is built once on the build machine instead of under emulation per platform.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund

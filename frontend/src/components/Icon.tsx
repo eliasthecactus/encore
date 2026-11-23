@@ -27,6 +27,10 @@ const PATHS: Record<string, string> = {
   upload: "M12 16V4M7 9l5-5 5 5M4 16v4h16v-4",
   clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4v5l3 2",
   back: "M15 5l-7 7 7 7",
+  download: "M12 4v11M7 10l5 5 5-5M5 20h14",
+  device: "M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1ZM11 18h2",
+  cloudOff: "M7 18a4 4 0 0 1-.8-7.9A6 6 0 0 1 17.4 9M19.5 11.5A3.5 3.5 0 0 1 17 18H11M3 3l18 18",
+  install: "M12 3v10M8 9l4 4 4-4M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3",
 };
 
 export function Icon({ name, size = 20, className }: { name: keyof typeof PATHS | string; size?: number; className?: string }) {

@@ -3,13 +3,14 @@ import { api, fmtTime, statusLabel, type SearchResult, type Song } from "../api"
 import { Icon } from "./Icon";
 
 interface Props {
+  online: boolean;
   songs: Song[];
   onPlay: (id: string) => void;
   onChanged: () => void;
   askSinger: () => Promise<string | null>;
 }
 
-export function Search({ songs, onPlay, onChanged, askSinger }: Props) {
+export function Search({ songs, online, onPlay, onChanged, askSinger }: Props) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [busy, setBusy] = useState(false);
@@ -59,6 +60,18 @@ export function Search({ songs, onPlay, onChanged, askSinger }: Props) {
     }
   };
 
+  if (!online) {
+    return (
+      <div className="page center">
+        <div className="empty">
+          <Icon name="cloudOff" size={40} />
+          <h2>Search needs a connection</h2>
+          <p className="muted">Searching and adding songs goes through your Encore server. Songs saved on this device are in the library.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="page">
       <div className="searchbar">
@@ -67,7 +80,7 @@ export function Search({ songs, onPlay, onChanged, askSinger }: Props) {
           ref={input}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search YouTube Music, or paste a YouTube link"
+          placeholder="Search songs or paste a YouTube link"
           spellCheck={false}
         />
         {busy && <span className="spinner" />}

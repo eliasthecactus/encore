@@ -402,6 +402,11 @@ if (config.STATIC_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=config.STATIC_DIR / "assets"), name="assets")
 
 
+# The service worker, manifest and index.html must never be served stale, or app updates get stuck.
+NO_CACHE = {"Cache-Control": "no-cache"}
+STATIC_TYPES = {".webmanifest": "application/manifest+json", ".js": "text/javascript", ".svg": "image/svg+xml"}
+
+
 @app.exception_handler(404)
 async def spa_fallback(request: Request, exc: Exception):
     path = request.url.path
@@ -409,7 +414,8 @@ async def spa_fallback(request: Request, exc: Exception):
     if not path.startswith(("/api/", "/media/", "/backgrounds/", "/assets/")) and index.exists():
         candidate = (config.STATIC_DIR / path.lstrip("/")).resolve()
         if candidate.is_file() and config.STATIC_DIR in candidate.parents:
-            return FileResponse(candidate)
-        return FileResponse(index)
+            headers = NO_CACHE if candidate.name in ("sw.js", "manifest.webmanifest", "index.html") else None
+            return FileResponse(candidate, media_type=STATIC_TYPES.get(candidate.suffix), headers=headers)
+        return FileResponse(index, headers=NO_CACHE)
     detail = getattr(exc, "detail", "not found")
     return JSONResponse({"detail": detail}, status_code=404)
