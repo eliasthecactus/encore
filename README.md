@@ -73,12 +73,16 @@ Open http://localhost:8080 on the machine connected to the TV, and the same addr
 |---|---|---|
 | `PUID` / `PGID` | `1000` | user the app runs as, owns the mounted folders |
 | `PORT` | `8080` | |
-| `ENCORE_UPDATE_YTDLP` | `true` | update yt-dlp on every container start (YouTube changes often) |
+| `ENCORE_UPDATE_YTDLP` | `true` | update yt-dlp on every container start (YouTube changes often), skipped automatically without internet |
 | `ENCORE_MODEL` | `htdemucs` | `htdemucs`, `htdemucs_ft` (about 4x slower, cleaner) or `mdx_extra` |
 | `ENCORE_DEVICE` | `auto` | `auto`, `cpu`, `cuda` |
 | `ENCORE_DOWNLOAD_VIDEO` | `true` | also fetch the music video as a background |
 
 Every key in `config.json` can be overridden the same way (`ENCORE_<KEY>`), and everything is editable in the Settings page.
+
+### Offline
+
+Once songs are in the library, Encore works without internet: stems, covers, music videos and lyrics are stored locally and the web app is bundled. Phones only need the local network. Searching and adding new songs needs internet. Without a connection the container skips the yt-dlp update and starts in a few seconds.
 
 ### How long does a song take?
 
