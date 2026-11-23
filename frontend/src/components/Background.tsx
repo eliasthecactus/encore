@@ -66,7 +66,7 @@ function Aurora({ palette, player }: { palette: RGB[]; player: StemPlayer | null
   return (
     <div className="aurora" ref={ref}>
       {palette.slice(0, 4).map((c, i) => (
-        <span key={i} className={`blob b${i}`} style={{ background: `radial-gradient(circle at center, ${rgb(c, 0.85)}, ${rgb(c, 0)} 65%)` }} />
+        <span key={i} className={`blob b${i}`} style={{ background: `radial-gradient(circle at center, ${rgb(c, 0.85)}, ${rgb(c, 0.4)} 35%, ${rgb(c, 0)} 70%)` }} />
       ))}
       <div className="grain" />
     </div>

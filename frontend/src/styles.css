@@ -206,7 +206,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.2); }
 @keyframes kenburns { from { transform: scale(1.05); } to { transform: scale(1.18) translate(-2%, -1%); } }
 
 .aurora { position: absolute; inset: 0; background: #06050a; overflow: hidden; --pulse: 0; }
-.blob { position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; filter: blur(40px); mix-blend-mode: screen; opacity: calc(0.55 + var(--pulse) * 0.5); transform: scale(calc(1 + var(--pulse) * 0.25)); }
+.blob { position: absolute; width: 70vmax; height: 70vmax; border-radius: 50%; mix-blend-mode: screen; will-change: transform; opacity: calc(0.55 + var(--pulse) * 0.5); transform: scale(calc(1 + var(--pulse) * 0.25)); }
 .blob.b0 { left: -20vmax; top: -25vmax; animation: drift0 26s ease-in-out infinite alternate; }
 .blob.b1 { right: -25vmax; top: -10vmax; animation: drift1 31s ease-in-out infinite alternate; }
 .blob.b2 { left: 10vmax; bottom: -35vmax; animation: drift2 23s ease-in-out infinite alternate; }
