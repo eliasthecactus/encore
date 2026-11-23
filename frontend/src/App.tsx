@@ -68,7 +68,7 @@ export function App() {
   }, [refresh, refreshBackgrounds]);
 
   // Poll faster while something is being processed.
-  const busy = songs.some((s) => s.status !== "ready" && s.status !== "error");
+  const busy = songs.some((s) => (s.status !== "ready" && s.status !== "error") || (s.status === "ready" && !!s.stage));
   useEffect(() => {
     const id = window.setInterval(refresh, busy ? 1500 : 5000);
     return () => window.clearInterval(id);

@@ -1,4 +1,4 @@
-"""Background job runner: download -> separate vocals -> lyrics -> music video."""
+"""Background job runner: download -> separate vocals -> lyrics -> word timing -> music video."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,8 @@ from . import config, db, lyrics, ytm
 log = logging.getLogger("encore.worker")
 
 # Overall progress budget per stage (sums to 1).
-STAGES = {"download": (0.0, 0.15), "separate": (0.15, 0.90), "lyrics": (0.90, 0.93), "video": (0.93, 1.0)}
+STAGES = {"download": (0.0, 0.15), "separate": (0.15, 0.85), "lyrics": (0.85, 0.87), "align": (0.87, 0.95),
+          "video": (0.95, 1.0)}
 
 
 class Cancelled(Exception):
@@ -79,6 +81,7 @@ class Worker:
         self._cancel: set[str] = set()
         self._proc: subprocess.Popen | None = None
         self._threads: list[threading.Thread] = []
+        self._align_queue: deque[str] = deque()  # ready songs that only need new word timing
 
     # -- control --------------------------------------------------------------
     def start(self) -> None:
@@ -92,6 +95,13 @@ class Worker:
         self.cancel(self._current or "")
 
     def poke(self) -> None:
+        self._wake.set()
+
+    def queue_align(self, song_id: str) -> None:
+        """Re-time the lyrics of a ready song without touching its audio or status."""
+        with self._lock:
+            if song_id not in self._align_queue:
+                self._align_queue.append(song_id)
         self._wake.set()
 
     def cancel(self, song_id: str) -> None:
@@ -108,7 +118,14 @@ class Worker:
     # -- loop -----------------------------------------------------------------
     def _loop(self) -> None:
         while not self._stop.is_set():
-            song = db.next_queued_song()
+            align_only = False
+            with self._lock:
+                song_id = self._align_queue.popleft() if self._align_queue else None
+            song = db.get_song(song_id) if song_id else None
+            if song and song["status"] == "ready":
+                align_only = True
+            else:
+                song = db.next_queued_song()
             if not song:
                 self._wake.wait(timeout=5)
                 self._wake.clear()
@@ -117,7 +134,10 @@ class Worker:
                 self._current = song["id"]
                 self._cancel.discard(song["id"])
             try:
-                self._process(song)
+                if align_only:
+                    self._align_job(song)
+                else:
+                    self._process(song)
             except Cancelled:
                 log.info("cancelled %s", song["id"])
             except Exception as exc:  # noqa: BLE001 - surface anything to the UI
@@ -169,6 +189,17 @@ class Worker:
             db.update_song(sid, lyrics=text, lyrics_synced=int(synced), lyrics_source=src)
         self._check(sid)
 
+        song = db.get_song(sid) or song
+        if settings.get("align_lyrics", True) and song.get("lyrics"):
+            self._progress(sid, "align", 0, status="finishing")
+            try:
+                self._align(song, folder)
+            except Cancelled:
+                raise
+            except Exception:
+                log.warning("word timing for %s failed", sid, exc_info=True)
+        self._check(sid)
+
         if settings["download_video"] and not (folder / "video.mp4").exists():
             self._progress(sid, "video", 0, status="finishing")
             try:
@@ -182,6 +213,64 @@ class Worker:
                        has_video=int((folder / "video.mp4").exists()),
                        has_cover=int((folder / "cover.jpg").exists()))
         shutil.rmtree(folder / ".work", ignore_errors=True)
+
+    def _align_job(self, song: dict[str, Any]) -> None:
+        sid = song["id"]
+        folder = song_dir(sid)
+        if not song.get("lyrics") or not (folder / "vocals.mp3").exists():
+            return
+        db.update_song(sid, stage="align", progress=0.0)
+        try:
+            self._align(song, folder, standalone=True)
+        except Cancelled:
+            raise
+        except Exception:
+            log.warning("word timing for %s failed", sid, exc_info=True)
+        finally:
+            if db.get_song(sid):
+                db.update_song(sid, stage="", progress=1.0)
+            shutil.rmtree(folder / ".work" / "align", ignore_errors=True)
+
+    def _align(self, song: dict[str, Any], folder: Path, standalone: bool = False) -> None:
+        """Word timing from the vocal stem in a subprocess (see align.py)."""
+        sid = song["id"]
+        work = folder / ".work" / "align"
+        work.mkdir(parents=True, exist_ok=True)
+        (work / "lyrics.txt").write_text(song["lyrics"])
+        cmd = [sys.executable, "-m", "encore.align", str(folder), str(work / "lyrics.txt"),
+               "1" if song.get("lyrics_synced") else "0"]
+        env = {**os.environ, "TORCH_HOME": str(config.MODELS_DIR), "PYTHONUNBUFFERED": "1",
+               "PYTHONPATH": str(Path(__file__).resolve().parent.parent)}
+        with self._lock:
+            self._check(sid)
+            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+        proc = self._proc
+        assert proc.stdout is not None
+        tail, result = "", ""
+        for raw in proc.stdout:
+            line = raw.decode(errors="replace").strip()
+            if not line:
+                continue
+            if line.startswith("PROGRESS "):
+                frac = float(line.split()[1])
+                if standalone:
+                    db.update_song(sid, stage="align", progress=round(frac, 3))
+                else:
+                    self._progress(sid, "align", frac)
+                continue
+            if line.startswith("RESULT "):
+                result = line[7:]
+            elif "Downloading" in line:
+                db.update_song(sid, stage="model")
+            tail = (tail + "\n" + line)[-2000:]
+        code = proc.wait()
+        self._check(sid)
+        if code != 0:
+            raise RuntimeError(f"alignment exited with {code}: {tail.strip().splitlines()[-1] if tail.strip() else ''}")
+        log.info("word timing for %s: %s", sid, result)
+        if result and not result.startswith("aligned=0/"):
+            # The timing already sits on the audio; an old hand-set offset would now shift it twice.
+            db.update_song(sid, lyrics_offset=0)
 
     def _download_audio(self, song: dict[str, Any], folder: Path) -> Path:
         sid = song["id"]

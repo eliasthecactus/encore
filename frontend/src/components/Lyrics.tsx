@@ -14,7 +14,7 @@ interface Props {
 
 const GAP = 4.5; // seconds without singing before the countdown dots appear
 
-/** Fraction of the line that has been sung, word timed if the LRC has <mm:ss> tags. */
+/** Fraction of the line that has been sung: from word timing (vocal stem or <mm:ss> tags) when there is any. */
 function lineProgress(line: LyricLine, t: number): number {
   const start = line.t ?? 0;
   const end = line.end ?? start + 4;
@@ -23,7 +23,8 @@ function lineProgress(line: LyricLine, t: number): number {
     let done = 0;
     for (let i = 0; i < line.words.length; i++) {
       const w = line.words[i];
-      const wEnd = line.words[i + 1]?.t ?? end;
+      // Aligned words carry their own end, so the fill rests in pauses instead of creeping on.
+      const wEnd = Math.max(w.t + 0.08, w.end ?? line.words[i + 1]?.t ?? end);
       if (t < w.t) break;
       if (t >= wEnd) done += w.text.length;
       else {

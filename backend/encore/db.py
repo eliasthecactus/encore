@@ -72,6 +72,8 @@ def init() -> None:
             "UPDATE songs SET status='queued', stage='', progress=0 "
             "WHERE status IN ('downloading','separating','finishing')"
         )
+        # A word-timing job on a ready song does not survive a restart either.
+        c.execute("UPDATE songs SET stage='' WHERE status='ready' AND stage!=''")
 
 
 def _row(r: sqlite3.Row | None) -> dict[str, Any] | None:

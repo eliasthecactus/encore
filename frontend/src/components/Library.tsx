@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { api, fmtTime, statusLabel, type Song } from "../api";
+import { api, fmtTime, STAGE_LABEL, statusLabel, type Song } from "../api";
 import { Icon } from "./Icon";
 import { LyricsEditor } from "./LyricsEditor";
 
@@ -87,6 +87,7 @@ export function Library({ songs, models, onPlay, onChanged, askSinger, onSearch 
                 </span>
               )}
               <span className="badges">
+                {s.status === "ready" && (s.stage === "align" || s.stage === "model") && <span className="badge" title="Timing the lyrics on the vocal track">{STAGE_LABEL[s.stage]} {Math.round(s.progress * 100)}%</span>}
                 {s.status === "ready" && !s.lyrics_synced && <span className="badge warn" title="No synced lyrics">{s.lyrics_source ? "text" : "no lyrics"}</span>}
                 {!!s.has_video && <span className="badge" title="Music video available"><Icon name="video" size={12} /></span>}
               </span>
@@ -111,6 +112,11 @@ export function Library({ songs, models, onPlay, onChanged, askSinger, onSearch 
                   <button onClick={() => { setMenu(null); setEditing(s.id); }}>
                     <Icon name="edit" size={16} /> Lyrics
                   </button>
+                  {s.status === "ready" && s.lyrics_source && (
+                    <button onClick={() => act(() => api.alignLyrics(s.id))} disabled={!!s.stage}>
+                      <Icon name="refresh" size={16} /> Time lyrics again
+                    </button>
+                  )}
                   {Object.entries(models).map(([m, label]) => (
                     <button key={m} onClick={() => act(() => api.reprocess(s.id, m))} title={label} disabled={s.status !== "ready" && s.status !== "error"}>
                       <Icon name="refresh" size={16} /> Separate with {m}{s.model === m ? " (current)" : ""}

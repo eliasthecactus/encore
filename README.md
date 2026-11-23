@@ -4,7 +4,8 @@ Self-hosted karaoke for any song. Search YouTube Music, and Encore downloads the
 
 - **Any song**: search YouTube Music or paste a YouTube link. Audio comes from yt-dlp, metadata and cover art from YouTube Music.
 - **Vocal slider**: Demucs (Meta's source separation model) splits every song into `vocals` and `instrumental`. Both stems play sample-locked in the browser, the slider is just the vocal volume (0 % = pure karaoke, 30 % = guide vocals).
-- **Synced lyrics**: from [LRCLIB](https://lrclib.net) or YouTube Music, with a line fill effect, countdown dots in instrumental breaks and a per-song timing offset. You can paste your own LRC.
+- **Synced lyrics**: from [LRCLIB](https://lrclib.net) or YouTube Music, with a fill effect, countdown dots in instrumental breaks and a per-song timing offset. You can paste your own LRC.
+- **Word timing**: LRC files only time whole lines, often for a slightly different release. Encore aligns every word on the separated vocal track (torchaudio's MMS_FA model, CPU is fine, about 20 to 60 s per song), so the fill follows the singer and rests in pauses. Lines it is unsure about keep the LRC time, and plain lyrics without timestamps get synced the same way. Latin-script lyrics only for now.
 - **Backgrounds**: aurora (colours taken from the cover), audio visualizer, cover art, the official music video (muted, synced), or your own uploaded image or video.
 - **Party queue**: phones on the same network open the same page, search, and line up with their name. The TV shows who's next and counts down.
 - **Everything stays local**: processed songs live in a mounted folder, settings in `config.json`, data in SQLite. A song is prepared once and starts instantly after that.
@@ -64,7 +65,7 @@ Open http://localhost:8080 on the machine connected to the TV, and the same addr
 
 | Mount      | Contents |
 |------------|----------|
-| `/config`  | `config.json` (settings), `encore.db` (SQLite), `models/` (Demucs weights, downloaded on first use, about 80 MB), `backgrounds/` (your uploads), `cache/`, optional `cookies.txt` |
+| `/config`  | `config.json` (settings), `encore.db` (SQLite), `models/` (Demucs weights about 80 MB and the word-timing model about 1.2 GB, both downloaded on first use), `backgrounds/` (your uploads), `cache/`, optional `cookies.txt` |
 | `/library` | one folder per song: `instrumental.mp3`, `vocals.mp3`, `source.*`, `cover.jpg`, `video.mp4` |
 
 ### Environment
@@ -77,6 +78,7 @@ Open http://localhost:8080 on the machine connected to the TV, and the same addr
 | `ENCORE_MODEL` | `htdemucs` | `htdemucs`, `htdemucs_ft` (about 4x slower, cleaner) or `mdx_extra` |
 | `ENCORE_DEVICE` | `auto` | `auto`, `cpu`, `cuda` |
 | `ENCORE_DOWNLOAD_VIDEO` | `true` | also fetch the music video as a background |
+| `ENCORE_ALIGN_LYRICS` | `true` | time every word on the vocal track |
 
 Every key in `config.json` can be overridden the same way (`ENCORE_<KEY>`), and everything is editable in the Settings page.
 
@@ -129,7 +131,7 @@ cd frontend && npm install && npm run dev
 
 `npm run build` writes the web app into `backend/encore/static`, which the backend serves.
 
-Layout: `backend/encore` (FastAPI app: `main.py` routes, `worker.py` job pipeline, `ytm.py` YouTube Music, `lyrics.py` LRCLIB and LRC parsing, `db.py` SQLite, `config.py` settings), `frontend/src` (React + Vite: `audio.ts` stem player, `components/Stage.tsx` player, `Lyrics.tsx`, `Background.tsx`).
+Layout: `backend/encore` (FastAPI app: `main.py` routes, `worker.py` job pipeline, `ytm.py` YouTube Music, `lyrics.py` LRCLIB and LRC parsing, `align.py` word timing on the vocal stem, `db.py` SQLite, `config.py` settings), `frontend/src` (React + Vite: `audio.ts` stem player, `components/Stage.tsx` player, `Lyrics.tsx`, `Background.tsx`).
 
 Releases: pushing to `main` publishes `ghcr.io/<owner>/encore:edge`, a `v1.2.3` tag publishes `1.2.3`, `1.2` and `latest` ([workflow](.github/workflows/release.yml)).
 

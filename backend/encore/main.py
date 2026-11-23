@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from . import __version__, config, db, lyrics, ytm
+from . import __version__, align, config, db, lyrics, ytm
 from .worker import song_dir, worker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -162,9 +162,23 @@ async def list_songs():
 async def get_song(song_id: str):
     song = _require(song_id)
     out = _public(song)
-    out["lyrics"] = lyrics.parse(song["lyrics"], bool(song["lyrics_synced"]))
+    timing = align.load_timing(song_dir(song_id), song["lyrics"])
+    lines, synced = align.apply_timing(lyrics.parse(song["lyrics"], bool(song["lyrics_synced"])), timing)
+    out["lyrics"] = lines
+    out["lyrics_synced"] = int(synced)
     out["lyrics_raw"] = song["lyrics"]
+    out["lyrics_raw_synced"] = song["lyrics_synced"]
+    out["lyrics_timing"] = (
+        {"mode": timing["mode"], "aligned": timing.get("aligned", 0), "total": timing.get("total", 0),
+         "offset": timing.get("offset", 0)} if timing else None
+    )
     return out
+
+
+def _realign(song_id: str) -> None:
+    song = db.get_song(song_id)
+    if song and song["status"] == "ready" and song["lyrics"] and config.get().get("align_lyrics", True):
+        worker.queue_align(song_id)
 
 
 class PatchSong(BaseModel):
@@ -232,6 +246,7 @@ async def set_lyrics(song_id: str, body: SetLyrics):
     text = body.text.strip()
     synced = bool(re.search(r"^\s*\[\d+:\d+", text, re.M))
     db.update_song(song_id, lyrics=text, lyrics_synced=int(synced), lyrics_source="manual" if text else "")
+    _realign(song_id)
     return await get_song(song_id)
 
 
@@ -241,7 +256,33 @@ async def refetch_lyrics(song_id: str):
     text, synced, source = await run_in_threadpool(lyrics.fetch, song)
     if text:
         db.update_song(song_id, lyrics=text, lyrics_synced=int(synced), lyrics_source=source)
+        _realign(song_id)
     return await get_song(song_id)
+
+
+@app.post("/api/songs/{song_id}/lyrics/align")
+async def align_lyrics(song_id: str):
+    song = _require(song_id)
+    if song["status"] != "ready":
+        raise HTTPException(409, "the song is not ready yet")
+    if not song["lyrics"]:
+        raise HTTPException(400, "the song has no lyrics")
+    worker.queue_align(song_id)
+    return _public(db.get_song(song_id))
+
+
+@app.post("/api/lyrics/align")
+async def align_all():
+    """Queue word timing for every ready song that has lyrics but no (current) timing."""
+    n = 0
+    for s in db.list_songs():
+        if s["status"] != "ready":
+            continue
+        full = db.get_song(s["id"]) or {}
+        if full.get("lyrics") and not align.load_timing(song_dir(s["id"]), full["lyrics"]):
+            worker.queue_align(s["id"])
+            n += 1
+    return {"queued": n}
 
 
 # ---- party queue -------------------------------------------------------------

@@ -43,6 +43,7 @@ DEFAULTS: dict[str, Any] = {
     "custom_background": "",  # file name inside backgrounds/
     "lyrics_sources": ["lrclib", "ytmusic"],
     "lyrics_font_scale": 1.0,
+    "align_lyrics": True,  # word timing from the vocal stem (MMS_FA, ~1.2 GB model download once)
     "auto_advance": True,  # play the next queued song automatically
     "countdown_seconds": 5,
     "ytmusic_language": "en",

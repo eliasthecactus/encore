@@ -37,7 +37,7 @@ export function LyricsEditor({ songId, onClose }: { songId: string; onClose: () 
           <div>
             <h3>{song?.title ?? "Lyrics"}</h3>
             <div className="muted small">
-              {song ? `${song.lyrics_synced ? "Synced" : "Not synced"} · source: ${song.lyrics_source || "none"}` : "Loading"}
+              {song ? `${song.lyrics_raw_synced ? "Synced" : "Not synced"} · source: ${song.lyrics_source || "none"} · ${timingLabel(song)}` : "Loading"}
             </div>
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
@@ -49,10 +49,13 @@ export function LyricsEditor({ songId, onClose }: { songId: string; onClose: () 
           placeholder={"Paste LRC lyrics, e.g.\n[00:12.40]First line\n[00:15.90]Second line"}
         />
         <div className="muted small">
-          Lines with [mm:ss.xx] timestamps are synced. Plain text scrolls along with the song. Manual lyrics are kept when the song is processed again.
+          Lines with [mm:ss.xx] timestamps are synced. Plain text scrolls along with the song, unless word timing finds it on the vocal track. Manual lyrics are kept when the song is processed again. Saving times the words again.
         </div>
         <div className="row end">
           {msg && <span className="muted small grow">{msg}</span>}
+          <button className="btn" disabled={busy || !song?.lyrics_raw} onClick={() => run(async () => { await api.alignLyrics(songId); return api.song(songId); }, "Word timing queued, takes about a minute")}>
+            <Icon name="refresh" size={16} /> Time words
+          </button>
           <button className="btn" disabled={busy} onClick={() => run(() => api.refetchLyrics(songId), "Searched again")}>
             <Icon name="refresh" size={16} /> Search again
           </button>
@@ -63,4 +66,12 @@ export function LyricsEditor({ songId, onClose }: { songId: string; onClose: () 
       </div>
     </div>
   );
+}
+
+function timingLabel(s: SongDetail): string {
+  if (s.stage === "align" || s.stage === "model") return "word timing running";
+  const t = s.lyrics_timing;
+  if (!t) return "no word timing";
+  if (!t.aligned) return t.offset ? `no word timing, shifted ${t.offset > 0 ? "+" : ""}${t.offset.toFixed(2)} s` : "word timing found no match";
+  return `words timed on ${t.aligned} of ${t.total} lines`;
 }

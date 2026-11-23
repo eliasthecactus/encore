@@ -39,13 +39,15 @@ export interface LyricLine {
   t: number | null;
   end: number | null;
   text: string;
-  words: { t: number; text: string }[];
+  words: { t: number; end?: number; text: string }[]; // end: from word timing on the vocal stem
 }
 
 export interface SongDetail extends Song {
   lyrics: LyricLine[];
   lyrics_raw: string;
+  lyrics_raw_synced: number;
   lyrics_offset: number;
+  lyrics_timing: { mode: "synced" | "plain"; aligned: number; total: number; offset: number } | null;
   video_id: string;
 }
 
@@ -75,6 +77,7 @@ export interface Settings {
   custom_background: string;
   lyrics_sources: string[];
   lyrics_font_scale: number;
+  align_lyrics: boolean;
   auto_advance: boolean;
   countdown_seconds: number;
   ytmusic_language: string;
@@ -137,6 +140,8 @@ export const api = {
   played: (id: string) => req("POST", `/api/songs/${id}/played`),
   setLyrics: (id: string, text: string) => req<SongDetail>("PUT", `/api/songs/${id}/lyrics`, { text }),
   refetchLyrics: (id: string) => req<SongDetail>("POST", `/api/songs/${id}/lyrics/refetch`),
+  alignLyrics: (id: string) => req<Song>("POST", `/api/songs/${id}/lyrics/align`),
+  alignAll: () => req<{ queued: number }>("POST", "/api/lyrics/align"),
   queue: () => req<QueueEntry[]>("GET", "/api/queue"),
   enqueue: (song_id: string, singer: string) => req<{ id: number }>("POST", "/api/queue", { song_id, singer }),
   dequeue: (id: number) => req("DELETE", `/api/queue/${id}`),
@@ -176,6 +181,7 @@ export const STAGE_LABEL: Record<string, string> = {
   model: "Fetching AI model",
   separate: "Separating vocals",
   lyrics: "Finding lyrics",
+  align: "Timing lyrics",
   video: "Fetching music video",
 };
 

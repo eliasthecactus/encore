@@ -22,6 +22,20 @@ export function SettingsPage({ config, backgrounds, onSaved, onBackgrounds }: Pr
   const [sys, setSys] = useState<SystemInfo | null>(null);
   const [saved, setSaved] = useState(false);
   const file = useRef<HTMLInputElement>(null);
+  const [aligning, setAligning] = useState(false);
+  const [alignMsg, setAlignMsg] = useState("");
+
+  const alignAll = async () => {
+    setAligning(true);
+    try {
+      const r = await api.alignAll();
+      setAlignMsg(r.queued ? `${r.queued} song${r.queued === 1 ? "" : "s"} queued` : "All songs are already timed");
+    } catch (e) {
+      setAlignMsg((e as Error).message);
+    } finally {
+      setAligning(false);
+    }
+  };
 
   useEffect(() => {
     api.system().then(setSys).catch(() => {});
@@ -132,6 +146,16 @@ export function SettingsPage({ config, backgrounds, onSaved, onBackgrounds }: Pr
             {[360, 480, 720, 1080].map((h) => <option key={h} value={h}>{h}p</option>)}
           </select>
         </label>
+        <label className="check">
+          <input type="checkbox" checked={s.align_lyrics} onChange={(e) => save({ align_lyrics: e.target.checked })} />
+          <span>Time every word on the vocal track (about a minute per song on a CPU, 1.2 GB model download once)</span>
+        </label>
+        <div className="row">
+          <button className="btn" disabled={!s.align_lyrics || aligning} onClick={alignAll}>
+            <Icon name="refresh" size={16} /> Time lyrics of existing songs
+          </button>
+          {alignMsg && <span className="muted small">{alignMsg}</span>}
+        </div>
         <label className="field">
           <span>Lyrics sources (in order)</span>
           <select value={s.lyrics_sources.join(",")} onChange={(e) => save({ lyrics_sources: e.target.value.split(",") })}>
