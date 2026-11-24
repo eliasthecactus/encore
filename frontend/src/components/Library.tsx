@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, fmtTime, STAGE_LABEL, statusLabel, type Song } from "../api";
 import { offlineCapable, removeSong, saveSong, useSaved, useSaving, type SavedSong } from "../offline";
 import { Icon } from "./Icon";
@@ -175,6 +175,11 @@ interface MenuProps {
 /** Dropdown on desktop, bottom sheet on phones (see styles.css). */
 function SongMenu({ song: s, online, models, isSaved, isSaving, onClose, act, askSinger, onLyrics }: MenuProps) {
   const ready = s.status === "ready";
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <>
       <div className="menu-back" onClick={onClose} />
