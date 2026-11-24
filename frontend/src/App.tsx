@@ -162,7 +162,7 @@ export function App() {
       )}
       <nav className="nav">
         <button className="logo" onClick={() => go("stage")}>
-          <span className="logo-mark" />
+          <img className="logo-mark" src="/favicon.svg" alt="" width={28} height={28} />
           encore
         </button>
         <div className="tabs">
