@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import mimetypes
 import re
 import shutil
 from contextlib import asynccontextmanager
@@ -22,6 +23,9 @@ from starlette.concurrency import run_in_threadpool
 
 from . import __version__, align, config, db, lyrics, ytm
 from .worker import song_dir, worker
+
+# Slim images may lack /etc/mime.types; stems in .m4a should not be served as octet-stream.
+mimetypes.add_type("audio/mp4", ".m4a")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("encore")
@@ -62,7 +66,10 @@ def _public(song: dict[str, Any]) -> dict[str, Any]:
     out = {k: v for k, v in song.items() if k != "lyrics"}
     out["cover"] = f"/media/{sid}/cover.jpg" if song.get("has_cover") else thumb_url(song.get("thumbnail", ""), 600)
     if song.get("status") == "ready":
-        out["stems"] = {"instrumental": f"/media/{sid}/instrumental.mp3", "vocals": f"/media/{sid}/vocals.mp3"}
+        folder = song_dir(sid)
+        files = {n: config.stem_file(folder, n) for n in config.STEM_NAMES}
+        if all(files.values()):
+            out["stems"] = {n: f"/media/{sid}/{f.name}" for n, f in files.items()}
         out["video"] = f"/media/{sid}/video.mp4" if song.get("has_video") else None
     return out
 
@@ -218,8 +225,9 @@ async def reprocess(song_id: str, body: Reprocess):
         for p in folder.glob("source.*"):
             p.unlink(missing_ok=True)
     # Removing the stems forces a new separation with the current model.
-    for name in ("instrumental.mp3", "vocals.mp3"):
-        (folder / name).unlink(missing_ok=True)
+    for name in config.STEM_NAMES:
+        while (stem := config.stem_file(folder, name)) is not None:
+            stem.unlink(missing_ok=True)
     if body.model:
         if body.model not in config.MODELS:
             raise HTTPException(400, "unknown model")

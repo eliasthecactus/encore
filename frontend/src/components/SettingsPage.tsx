@@ -94,6 +94,10 @@ export function SettingsPage({ config, backgrounds, onSaved, onBackgrounds }: Pr
           <input type="checkbox" checked={s.auto_advance} onChange={(e) => save({ auto_advance: e.target.checked })} />
           <span>Play the next song in the queue automatically</span>
         </label>
+        <label className="check">
+          <input type="checkbox" checked={s.preload_next} onChange={(e) => save({ preload_next: e.target.checked })} />
+          <span>Load the next song in the queue while the current one plays, so it starts right away</span>
+        </label>
         <label className="field inline">
           <span>Countdown before the next song</span>
           <input type="number" min={0} max={30} value={s.countdown_seconds} onChange={(e) => save({ countdown_seconds: Number(e.target.value) })} />
@@ -140,11 +144,25 @@ export function SettingsPage({ config, backgrounds, onSaved, onBackgrounds }: Pr
           </select>
         </label>
         <label className="field">
-          <span>Stem quality</span>
-          <select value={s.mp3_bitrate} onChange={(e) => save({ mp3_bitrate: Number(e.target.value) })}>
-            {[160, 192, 256, 320].map((b) => <option key={b} value={b}>{b} kbps MP3</option>)}
+          <span>Stem format</span>
+          <select value={s.stem_format} onChange={(e) => save({ stem_format: e.target.value as Settings["stem_format"] })}>
+            <option value="aac">AAC (smaller, same quality)</option>
+            <option value="mp3">MP3</option>
           </select>
         </label>
+        <label className="field">
+          <span>Stem quality</span>
+          <select value={s.stem_bitrate} onChange={(e) => save({ stem_bitrate: Number(e.target.value) })}>
+            {[96, 128, 160, 192, 256, 320].map((b) => (
+              <option key={b} value={b}>{b} kbps{b === 160 ? " (recommended)" : ""}</option>
+            ))}
+          </select>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={s.mono_vocals} onChange={(e) => save({ mono_vocals: e.target.checked })} />
+          <span>Mono vocal stem (half the size and phone memory, vocals sit in the middle anyway)</span>
+        </label>
+        <p className="muted small">Format, quality and mono apply to songs processed from now on. Processing a song again applies them to it.</p>
         <label className="check">
           <input type="checkbox" checked={s.download_video} onChange={(e) => save({ download_video: e.target.checked })} />
           <span>Also download the music video as a background</span>

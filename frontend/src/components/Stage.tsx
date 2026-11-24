@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, fmtTime, type Background as Bg, type BackgroundMode, type QueueEntry, type Settings, type SongDetail } from "../api";
-import { StemPlayer } from "../audio";
+import { prefetchStems, StemPlayer } from "../audio";
 import { DEFAULT_PALETTE, paletteFrom, type RGB } from "../palette";
 import { Background } from "./Background";
 import { Icon } from "./Icon";
@@ -46,6 +46,8 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
   const [chrome, setChrome] = useState(true);
   const [ended, setEnded] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [blocked, setBlocked] = useState(false); // iOS wants a tap before it plays sound
+  const prefetchedFor = useRef("");
   const offsetRef = useRef(0);
   const hideTimer = useRef<number>(0);
   const seeking = useRef(false);
@@ -60,6 +62,7 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
     setEnded(false);
     setCountdown(null);
     setPlaying(false);
+    setBlocked(false);
     setPos(0);
     if (!now) return;
     let cancelled = false;
@@ -80,9 +83,12 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
           setPlaying(false);
           setEnded(true);
         };
+        p.onBlocked = setBlocked;
         setPlayer(p);
-        await p.play();
-        setPlaying(true);
+        const started = await p.play();
+        if (cancelled) return;
+        setPlaying(p.playing);
+        setBlocked(!started);
         void api.played(s.id).catch(() => {});
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
@@ -108,6 +114,23 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
     }, 250);
     return () => window.clearInterval(id);
   }, [player]);
+
+  // ---- preload the next song's stems while this one plays ----
+  const nextId = nextUp?.song_id ?? "";
+  useEffect(() => {
+    if (!settings.preload_next) {
+      prefetchedFor.current = "";
+      prefetchStems([]);
+      return;
+    }
+    if (!online || !player?.playing || !nextId || prefetchedFor.current === nextId) return;
+    if (pos < Math.min(15, player.duration / 2)) return;
+    prefetchedFor.current = nextId;
+    api
+      .song(nextId)
+      .then((s) => s.stems && prefetchStems([s.stems.instrumental, s.stems.vocals]))
+      .catch(() => (prefetchedFor.current = ""));
+  }, [pos, nextId, settings.preload_next, online, player]);
 
   // ---- auto advance ----
   useEffect(() => {
@@ -147,11 +170,17 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
   const toggle = useCallback(() => {
     if (!player) return;
     if (ended) setEnded(false);
-    player.toggle();
-    setPlaying(!player.playing ? false : true);
-    // play() is async; re-read shortly after
-    window.setTimeout(() => setPlaying(player.playing), 80);
-  }, [player, ended]);
+    if (player.playing && !blocked) {
+      player.pause();
+      setPlaying(false);
+      return;
+    }
+    // Called straight from the tap, so iOS lets the audio start.
+    void player.play().then((ok) => {
+      setPlaying(player.playing);
+      setBlocked(!ok);
+    });
+  }, [player, ended, blocked]);
 
   const saveOffset = useRef<number>(0);
   const changeOffset = useCallback(
@@ -311,6 +340,14 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
             <button className="btn" onClick={() => setCountdown(null)}>Wait</button>
           </div>
         </div>
+      )}
+
+      {blocked && player && countdown === null && (
+        <button className="tap-to-play" onClick={toggle}>
+          <span className="tap-icon"><Icon name="play" size={40} /></span>
+          <span className="tap-title">Tap to {pos > 0.5 ? "continue" : "start"}</span>
+          <span className="muted">The browser holds the sound until you tap.</span>
+        </button>
       )}
 
       {player && (

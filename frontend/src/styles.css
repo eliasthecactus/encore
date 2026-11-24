@@ -280,6 +280,15 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.2); }
 .cd-song { font-size: 20px; color: rgba(255, 255, 255, 0.8); }
 .cd-num { font-size: 72px; font-weight: 900; margin: 12px 0; font-variant-numeric: tabular-nums; }
 
+.tap-to-play {
+  position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  border: 0; padding: 24px; color: #fff; font: inherit; text-align: center; cursor: pointer;
+  background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); animation: rise 0.4s;
+}
+.tap-icon { display: grid; place-items: center; width: 96px; height: 96px; border-radius: 50%; background: var(--grad); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45); }
+.tap-icon svg { translate: 3px 0; }
+.tap-title { font-size: clamp(24px, 4vw, 40px); font-weight: 800; letter-spacing: -0.02em; }
+
 .controls {
   position: absolute; left: 50%; bottom: 22px; translate: -50% 0; width: min(1100px, calc(100% - 32px)); z-index: 4;
   padding: 12px 18px 14px; border-radius: 22px; background: rgba(14, 12, 20, 0.62); border: 1px solid rgba(255, 255, 255, 0.1);

@@ -32,10 +32,25 @@ MODELS = {
 
 BACKGROUNDS = ["aurora", "visualizer", "cover", "video", "custom"]
 
+# Stem files: AAC in .m4a (smaller at the same quality, decodes everywhere) or MP3.
+STEM_FORMATS = {"aac": "m4a", "mp3": "mp3"}
+STEM_NAMES = ("instrumental", "vocals")
+
+
+def stem_file(folder: Path, name: str) -> Path | None:
+    """The stem file of a song in whichever format it was encoded."""
+    for ext in STEM_FORMATS.values():
+        p = folder / f"{name}.{ext}"
+        if p.exists():
+            return p
+    return None
+
 DEFAULTS: dict[str, Any] = {
     "model": "htdemucs",
     "device": "auto",  # auto | cpu | cuda | mps
-    "mp3_bitrate": 256,
+    "stem_format": "aac",  # aac | mp3, applies to newly processed songs
+    "stem_bitrate": 160,  # kbps for the stereo instrumental; a mono vocal stem gets half
+    "mono_vocals": True,  # vocals sit in the centre, a mono stem halves their size and memory
     "download_video": True,  # fetch the music video (muted, <=720p) as a background option
     "video_max_height": 720,
     "default_vocals": 0.0,  # 0..1, vocal level when a song starts
@@ -45,6 +60,7 @@ DEFAULTS: dict[str, Any] = {
     "lyrics_font_scale": 1.0,
     "align_lyrics": True,  # word timing from the vocal stem (MMS_FA, ~1.2 GB model download once)
     "auto_advance": True,  # play the next queued song automatically
+    "preload_next": True,  # download the next queued song's stems while the current one plays
     "countdown_seconds": 5,
     "ytmusic_language": "en",
     "concurrent_jobs": 1,
@@ -88,6 +104,7 @@ def load() -> dict[str, Any]:
                 stored = json.loads(CONFIG_PATH.read_text())
             except json.JSONDecodeError:
                 stored = {}
+        stored = {k: v for k, v in stored.items() if k in DEFAULTS}  # drops retired keys like mp3_bitrate
         _settings = {**DEFAULTS, **stored, **_env_overrides()}
         _write(_settings)
         return dict(_settings)
@@ -113,6 +130,9 @@ def update(patch: dict[str, Any]) -> dict[str, Any]:
             _settings[key] = value
         if _settings.get("model") not in MODELS:
             _settings["model"] = DEFAULTS["model"]
+        if _settings.get("stem_format") not in STEM_FORMATS:
+            _settings["stem_format"] = DEFAULTS["stem_format"]
+        _settings["stem_bitrate"] = min(320, max(64, int(_settings["stem_bitrate"])))
         if _settings.get("default_background") not in BACKGROUNDS:
             _settings["default_background"] = DEFAULTS["default_background"]
         _settings["default_vocals"] = min(1.0, max(0.0, float(_settings["default_vocals"])))

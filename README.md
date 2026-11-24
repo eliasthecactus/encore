@@ -67,7 +67,7 @@ Open http://localhost:8080 on the machine connected to the TV, and the same addr
 | Mount      | Contents |
 |------------|----------|
 | `/config`  | `config.json` (settings), `encore.db` (SQLite), `models/` (Demucs weights about 80 MB and the word-timing model about 1.2 GB, both downloaded on first use), `backgrounds/` (your uploads), `cache/`, optional `cookies.txt` |
-| `/library` | one folder per song: `instrumental.mp3`, `vocals.mp3`, `source.*`, `cover.jpg`, `video.mp4` |
+| `/library` | one folder per song: `instrumental.m4a`, `vocals.m4a` (or `.mp3`), `source.*`, `cover.jpg`, `video.mp4` |
 
 ### Environment
 
@@ -80,6 +80,10 @@ Open http://localhost:8080 on the machine connected to the TV, and the same addr
 | `ENCORE_DEVICE` | `auto` | `auto`, `cpu`, `cuda` |
 | `ENCORE_DOWNLOAD_VIDEO` | `true` | also fetch the music video as a background |
 | `ENCORE_ALIGN_LYRICS` | `true` | time every word on the vocal track |
+| `ENCORE_STEM_FORMAT` | `aac` | `aac` (`.m4a`, smaller) or `mp3` for newly processed songs |
+| `ENCORE_STEM_BITRATE` | `160` | kbps of the instrumental stem, a mono vocal stem gets half |
+| `ENCORE_MONO_VOCALS` | `true` | store the vocal stem in mono (half the size and phone memory) |
+| `ENCORE_PRELOAD_NEXT` | `true` | download the next queued song while the current one plays |
 
 Every key in `config.json` can be overridden the same way (`ENCORE_<KEY>`), and everything is editable in the Settings page.
 

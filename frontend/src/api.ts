@@ -71,7 +71,9 @@ export type BackgroundMode = "aurora" | "visualizer" | "cover" | "video" | "cust
 export interface Settings {
   model: string;
   device: string;
-  mp3_bitrate: number;
+  stem_format: "aac" | "mp3";
+  stem_bitrate: number;
+  mono_vocals: boolean;
   download_video: boolean;
   video_max_height: number;
   default_vocals: number;
@@ -82,6 +84,7 @@ export interface Settings {
   align_lyrics: boolean;
   auto_advance: boolean;
   countdown_seconds: number;
+  preload_next: boolean;
   ytmusic_language: string;
   concurrent_jobs: number;
 }

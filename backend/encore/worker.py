@@ -176,7 +176,7 @@ class Worker:
         if not (folder / "cover.jpg").exists():
             self._download_cover(song, folder)
 
-        stems_ok = (folder / "instrumental.mp3").exists() and (folder / "vocals.mp3").exists()
+        stems_ok = all(config.stem_file(folder, n) for n in config.STEM_NAMES)
         if not stems_ok or song.get("model") != settings["model"]:
             self._separate(sid, source, folder, settings)
         self._check(sid)
@@ -217,7 +217,7 @@ class Worker:
     def _align_job(self, song: dict[str, Any]) -> None:
         sid = song["id"]
         folder = song_dir(sid)
-        if not song.get("lyrics") or not (folder / "vocals.mp3").exists():
+        if not song.get("lyrics") or not config.stem_file(folder, "vocals"):
             return
         db.update_song(sid, stage="align", progress=0.0)
         try:
@@ -326,7 +326,6 @@ class Worker:
             sys.executable, "-m", "demucs",
             "-n", model,
             "--two-stems", "vocals",
-            "--mp3", "--mp3-bitrate", str(settings["mp3_bitrate"]),
             "-d", resolve_device(settings["device"]),
             "-o", str(work),
             "--filename", "{stem}.{ext}",
@@ -371,12 +370,39 @@ class Worker:
             raise RuntimeError(f"demucs exited with {code}: {tail.strip().splitlines()[-1] if tail.strip() else ''}")
 
         out = work / model
-        vocals, inst = out / "vocals.mp3", out / "no_vocals.mp3"
+        vocals, inst = out / "vocals.wav", out / "no_vocals.wav"
         if not (vocals.exists() and inst.exists()):
             raise RuntimeError("demucs did not produce stems")
-        shutil.move(str(vocals), folder / "vocals.mp3")
-        shutil.move(str(inst), folder / "instrumental.mp3")
+        self._encode_stems(sid, folder, {"instrumental": inst, "vocals": vocals}, settings)
         db.update_song(sid, model=model)
+
+    def _encode_stems(self, sid: str, folder: Path, wavs: dict[str, Path], settings: dict[str, Any]) -> None:
+        """Encode the WAV stems from Demucs in the configured format and replace the old stems."""
+        fmt = settings["stem_format"] if settings["stem_format"] in config.STEM_FORMATS else "aac"
+        ext = config.STEM_FORMATS[fmt]
+        bitrate = int(settings["stem_bitrate"])
+        encoded: dict[str, Path] = {}
+        for name, wav in wavs.items():
+            mono = name == "vocals" and settings.get("mono_vocals", True)
+            kbps = max(64, bitrate // 2) if mono else bitrate
+            dest = wav.with_name(f"{name}.{ext}")
+            cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(wav), "-map_metadata", "-1"]
+            if mono:
+                cmd += ["-ac", "1"]
+            if fmt == "aac":
+                cmd += ["-c:a", "aac", "-b:a", f"{kbps}k", "-movflags", "+faststart"]
+            else:
+                cmd += ["-c:a", "libmp3lame", "-b:a", f"{kbps}k"]
+            res = subprocess.run([*cmd, str(dest)], capture_output=True, text=True)
+            self._check(sid)
+            if res.returncode != 0 or not dest.exists():
+                raise RuntimeError(f"ffmpeg could not encode the {name} stem: {res.stderr.strip()[-300:]}")
+            encoded[name] = dest
+        for name in config.STEM_NAMES:
+            for old_ext in config.STEM_FORMATS.values():
+                (folder / f"{name}.{old_ext}").unlink(missing_ok=True)
+        for name, path in encoded.items():
+            shutil.move(str(path), folder / path.name)
 
     def _download_video(self, song: dict[str, Any], folder: Path, settings: dict[str, Any]) -> None:
         sid = song["id"]

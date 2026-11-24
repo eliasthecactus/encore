@@ -27,7 +27,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from . import lyrics
+from . import config, lyrics
 
 SR = 16000
 VERSION = 1
@@ -283,7 +283,10 @@ def run(folder: Path, text: str, synced: bool) -> dict[str, Any]:
     data: dict[str, Any] = {"version": VERSION, "hash": lyrics_hash(text), "mode": "synced" if synced else "plain",
                             "offset": 0, "lines": [None] * len(lines), "aligned": 0}
     if lines:
-        x = _load(folder / "vocals.mp3")
+        vocals = config.stem_file(folder, "vocals")
+        if vocals is None:
+            raise FileNotFoundError("no vocal stem")
+        x = _load(vocals)
         act = _voiced(x)
         al = Aligner()
         res = align_synced(al, x, act, lines, progress) if synced else align_plain(al, x, act, lines, progress)

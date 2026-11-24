@@ -5,12 +5,71 @@
 
 let sharedCtx: AudioContext | null = null;
 
+/**
+ * iOS treats Web Audio as "ambient" by default, so the silent switch mutes it.
+ * Declaring the page as media playback (Safari 16.4+) makes it play like a music app.
+ */
+function preferPlaybackSession(): void {
+  const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+  if (!session || session.type === "playback") return;
+  try {
+    session.type = "playback";
+  } catch {
+    /* not supported */
+  }
+}
+
 export function audioContext(): AudioContext {
+  preferPlaybackSession();
   if (!sharedCtx) sharedCtx = new AudioContext({ latencyHint: "playback" });
   return sharedCtx;
 }
 
+/**
+ * Resolves true once the context runs. Outside a tap iOS leaves resume() pending
+ * forever, so give up after a moment and let the caller ask for a tap instead.
+ */
+async function resumeSoon(ctx: AudioContext, ms = 400): Promise<boolean> {
+  if (ctx.state === "running") return true;
+  preferPlaybackSession();
+  const resumed = ctx.resume().then(
+    () => true,
+    () => false,
+  );
+  const timeout = new Promise<boolean>((r) => window.setTimeout(() => r(false), ms));
+  return (await Promise.race([resumed, timeout])) && (ctx.state as AudioContextState) === "running";
+}
+
+// ---- prefetch: the next song's encoded stems, kept as bytes (decoding waits for its turn) ----
+
+const prefetched = new Map<string, Promise<ArrayBuffer | null>>();
+
+export function prefetchStems(urls: string[]): void {
+  for (const url of [...prefetched.keys()]) if (!urls.includes(url)) prefetched.delete(url);
+  for (const url of urls) {
+    if (prefetched.has(url)) continue;
+    prefetched.set(
+      url,
+      fetch(url)
+        .then((r) => (r.ok ? r.arrayBuffer() : null))
+        .catch(() => null),
+    );
+  }
+}
+
+async function takePrefetched(url: string): Promise<ArrayBuffer | null> {
+  const p = prefetched.get(url);
+  if (!p) return null;
+  prefetched.delete(url);
+  return p;
+}
+
 async function fetchBuffer(ctx: AudioContext, url: string, onProgress: (f: number) => void): Promise<AudioBuffer> {
+  const ready = await takePrefetched(url);
+  if (ready) {
+    onProgress(1);
+    return ctx.decodeAudioData(ready);
+  }
   const res = await fetch(url);
   if (!res.ok) throw new Error(`could not load ${url}`);
   const total = Number(res.headers.get("content-length")) || 0;
@@ -52,8 +111,12 @@ export class StemPlayer {
   private startedAt = 0; // ctx time when playback (re)started
   private offset = 0; // song position at startedAt
   private generation = 0;
+  private intent = 0; // bumps on every play/pause so a late resume() cannot restart a paused song
   playing = false;
   onEnded: (() => void) | null = null;
+  /** True while the song should be playing but iOS holds the audio (needs a tap). */
+  onBlocked: ((blocked: boolean) => void) | null = null;
+  private onState = () => this.onBlocked?.(this.playing && this.ctx.state !== "running");
 
   constructor() {
     this.master = this.ctx.createGain();
@@ -66,6 +129,7 @@ export class StemPlayer {
     this.vocGain.connect(this.master);
     this.master.connect(this.analyser);
     this.analyser.connect(this.ctx.destination);
+    this.ctx.addEventListener("statechange", this.onState);
   }
 
   async load(instUrl: string, vocUrl: string, onProgress: (f: number) => void): Promise<void> {
@@ -91,9 +155,17 @@ export class StemPlayer {
     return Math.max(0, Math.min(t, this.duration));
   }
 
-  async play(): Promise<void> {
-    if (this.playing || !this.inst || !this.voc) return;
-    if (this.ctx.state !== "running") await this.ctx.resume();
+  /**
+   * Starts (or, after an interruption, resumes) playback. Call it straight from a tap
+   * where possible. Resolves false when the browser wants a tap first.
+   */
+  async play(): Promise<boolean> {
+    if (!this.inst || !this.voc) return false;
+    const intent = ++this.intent;
+    if (!(await resumeSoon(this.ctx))) return false;
+    if (intent !== this.intent) return false; // paused or restarted meanwhile
+    this.onState();
+    if (this.playing) return true;
     if (this.offset >= this.duration - 0.05) this.offset = 0;
     const gen = ++this.generation;
     const when = this.ctx.currentTime + 0.05;
@@ -115,18 +187,16 @@ export class StemPlayer {
     };
     this.startedAt = when;
     this.playing = true;
+    return true;
   }
 
   pause(): void {
+    this.intent++;
     if (!this.playing) return;
     this.offset = this.offset + (this.ctx.currentTime - this.startedAt);
     this.stopSources();
     this.playing = false;
-  }
-
-  toggle(): void {
-    if (this.playing) this.pause();
-    else void this.play();
+    this.onState();
   }
 
   seek(t: number): void {
@@ -161,6 +231,9 @@ export class StemPlayer {
   }
 
   destroy(): void {
+    this.intent++;
+    this.ctx.removeEventListener("statechange", this.onState);
+    this.onBlocked = null;
     this.stopSources();
     this.playing = false;
     this.master.disconnect();
