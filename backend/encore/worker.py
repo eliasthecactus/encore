@@ -323,7 +323,7 @@ class Worker:
         work.mkdir()
         model = settings["model"]
         cmd = [
-            sys.executable, "-m", "demucs",
+            sys.executable, "-m", "encore.separate",  # demucs CLI without torchaudio.save
             "-n", model,
             "--two-stems", "vocals",
             "-d", resolve_device(settings["device"]),
@@ -332,7 +332,8 @@ class Worker:
             str(source),
         ]
         log.info("separating %s with %s", sid, model)
-        env = {**os.environ, "TORCH_HOME": str(config.MODELS_DIR), "PYTHONUNBUFFERED": "1"}
+        env = {**os.environ, "TORCH_HOME": str(config.MODELS_DIR), "PYTHONUNBUFFERED": "1",
+               "PYTHONPATH": str(Path(__file__).resolve().parent.parent)}
         with self._lock:
             self._check(sid)
             self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
