@@ -9,6 +9,8 @@ import {
   stored,
   type Command,
   type GuestQueueEntry,
+  type LibrarySong,
+  type PartyRole,
   type PartyError,
   type PartyMessage,
   type StageState,
@@ -19,6 +21,7 @@ const GUEST_KEY = "encore.guest";
 interface Session {
   token: string;
   name: string;
+  role?: PartyRole; // last known, the server sends the current one
 }
 
 const ENDED: Record<string, string> = {
@@ -81,7 +84,7 @@ function Join({ notice, onJoined }: { notice: string; onJoined: (s: Session) => 
     try {
       const r = await partyApi.join(digits, name.trim());
       store("encore.guest-name", r.guest.name);
-      onJoined({ token: r.token, name: r.guest.name });
+      onJoined({ token: r.token, name: r.guest.name, role: r.guest.role });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -142,6 +145,7 @@ function Remote({ session, onLeave }: { session: Session; onLeave: (msg?: string
   const [stageAt, setStageAt] = useState(0);
   const [hostOnline, setHostOnline] = useState(true);
   const [connected, setConnected] = useState(false);
+  const [role, setRole] = useState<PartyRole>(session.role ?? "member");
   const [queue, setQueue] = useState<GuestQueueEntry[]>([]);
   const [toast, setToast] = useState("");
   const socket = useRef<PartySocket | null>(null);
@@ -154,6 +158,19 @@ function Remote({ session, onLeave }: { session: Session; onLeave: (msg?: string
     return () => window.clearTimeout(id);
   }, [toast]);
 
+  const changeRole = useCallback(
+    (r: PartyRole, announce: boolean) => {
+      setRole((old) => {
+        if (announce && old !== r) {
+          flash(r === "admin" ? "You are now a party admin: you can control the music" : "You are now a member: you can add songs");
+        }
+        return r;
+      });
+      store(GUEST_KEY, { ...session, role: r });
+    },
+    [session, flash],
+  );
+
   const refreshQueue = useCallback(() => {
     partyApi.queue(token).then(setQueue, (e: PartyError) => e.status === 401 && onLeave(ENDED.unauthorized));
   }, [token, onLeave]);
@@ -164,6 +181,7 @@ function Remote({ session, onLeave }: { session: Session; onLeave: (msg?: string
         setStage(r.state);
         setStageAt(performance.now());
         setHostOnline(r.host_online);
+        changeRole(r.guest.role, false);
       },
       (e: PartyError) => e.status === 401 && onLeave(ENDED.unauthorized),
     );
@@ -175,7 +193,9 @@ function Remote({ session, onLeave }: { session: Session; onLeave: (msg?: string
           setStage(m.state ?? {});
           setStageAt(performance.now());
           setHostOnline(!!m.host_online);
-        } else if (m.type === "queue") refreshQueue();
+        } else if (m.type === "welcome") changeRole(m.guest.role, false);
+        else if (m.type === "role") changeRole(m.guest.role, true);
+        else if (m.type === "queue") refreshQueue();
         else if (m.type === "error") flash(m.detail);
         else if (m.type === "ended") onLeave(ENDED[m.reason] ?? ENDED.ended);
       },
@@ -196,7 +216,7 @@ function Remote({ session, onLeave }: { session: Session; onLeave: (msg?: string
       window.clearInterval(poll);
       s.close();
     };
-  }, [token, refreshQueue, onLeave, flash]);
+  }, [token, refreshQueue, onLeave, flash, changeRole]);
 
   const send = useCallback(
     (c: Command) => {
@@ -221,7 +241,7 @@ function Remote({ session, onLeave }: { session: Session; onLeave: (msg?: string
           <div className="guest-title">Party</div>
           <div className="muted small">
             <span className={`dot ${connected && hostOnline ? "on" : ""}`} />{" "}
-            {!connected ? "Connecting…" : hostOnline ? `You are ${session.name}` : "The big screen is offline"}
+            {!connected ? "Connecting…" : hostOnline ? `${session.name} · ${role === "admin" ? "Admin" : "Member"}` : "The big screen is offline"}
           </div>
         </div>
         <button className="icon-btn small" onClick={leave} aria-label="Leave the party" title="Leave the party">
@@ -230,7 +250,7 @@ function Remote({ session, onLeave }: { session: Session; onLeave: (msg?: string
       </header>
 
       <main className="guest-main">
-        {tab === "now" && <NowPlaying stage={stage} stageAt={stageAt} send={send} queue={queue} onAdd={() => setTab("add")} />}
+        {tab === "now" && <NowPlaying stage={stage} stageAt={stageAt} send={send} queue={queue} onAdd={() => setTab("add")} admin={role === "admin"} />}
         {tab === "queue" && <GuestQueue queue={queue} token={token} onChanged={refreshQueue} onAdd={() => setTab("add")} flash={flash} />}
         {tab === "add" && <AddSongs token={token} name={session.name} flash={flash} onAdded={refreshQueue} />}
       </main>
@@ -239,7 +259,7 @@ function Remote({ session, onLeave }: { session: Session; onLeave: (msg?: string
 
       <nav className="guest-tabs">
         <button className={tab === "now" ? "on" : ""} onClick={() => setTab("now")}>
-          <Icon name="mic" /> <span>Remote</span>
+          <Icon name="mic" /> <span>{role === "admin" ? "Remote" : "Now"}</span>
         </button>
         <button className={tab === "queue" ? "on" : ""} onClick={() => setTab("queue")}>
           <Icon name="queue" /> <span>Queue{queue.length ? ` (${queue.length})` : ""}</span>
@@ -283,13 +303,14 @@ function useRemoteValue(remote: number | undefined, sendValue: (v: number) => vo
 }
 
 function NowPlaying({
-  stage, stageAt, send, queue, onAdd,
+  stage, stageAt, send, queue, onAdd, admin,
 }: {
   stage: Partial<StageState>;
   stageAt: number;
   send: (c: Command) => void;
   queue: GuestQueueEntry[];
   onAdd: () => void;
+  admin: boolean;
 }) {
   const [, tick] = useState(0);
   const [seekDraft, setSeekDraft] = useState<number | null>(null);
@@ -317,9 +338,13 @@ function NowPlaying({
         {ready ? (
           <>
             <p className="muted">Next: {ready.title}{ready.singer ? ` (${ready.singer})` : ""}</p>
-            <button className="btn primary big" onClick={() => send({ action: "play" })}>
-              <Icon name="play" /> Start the queue
-            </button>
+            {admin ? (
+              <button className="btn primary big" onClick={() => send({ action: "play" })}>
+                <Icon name="play" /> Start the queue
+              </button>
+            ) : (
+              <p className="muted small">A party admin or the big screen starts it.</p>
+            )}
           </>
         ) : (
           <>
@@ -354,6 +379,30 @@ function NowPlaying({
       )}
       {stage.blocked && <div className="hint">The big screen needs one tap before the sound can start.</div>}
 
+      {!admin && (
+        <>
+          <div className="seek readonly">
+            <span className="time">{fmtTime(pos)}</span>
+            <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={duration} aria-valuenow={Math.round(pos)}>
+              <span style={{ width: `${(pos / (duration || 1)) * 100}%` }} />
+            </div>
+            <span className="time">{fmtTime(duration)}</span>
+          </div>
+          {stage.nextUp && (
+            <div className="next-card">
+              <span className="muted small">Up next</span>
+              <b>{stage.nextUp.singer || "Someone"}</b>
+              <span className="muted ellipsis">{stage.nextUp.title}</span>
+            </div>
+          )}
+          <p className="muted small member-note">
+            You can add songs and remove your own. Party admins control the music.
+          </p>
+          <button className="btn primary big" onClick={onAdd}><Icon name="plus" /> Add a song</button>
+        </>
+      )}
+
+      {admin && (<>
       <div className="seek">
         <span className="time">{fmtTime(pos)}</span>
         <input
@@ -415,6 +464,7 @@ function NowPlaying({
           </button>
         ))}
       </div>
+      </>)}
     </div>
   );
 }
@@ -470,9 +520,18 @@ function GuestQueue({
   );
 }
 
+type LibSort = "popular" | "new" | "az";
+
+/** Lowercase without accents, so "beyonce" finds "Beyoncé". */
+function fold(t: string): string {
+  return t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
 function AddSongs({ token, name, flash, onAdded }: { token: string; name: string; flash: (m: string) => void; onAdded: () => void }) {
   const [q, setQ] = useState("");
   const [singer, setSinger] = useState(name);
+  const [library, setLibrary] = useState<LibrarySong[] | null>(null);
+  const [sort, setSort] = useState<LibSort>(() => stored<LibSort>("encore.guest-sort") ?? "popular");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -480,9 +539,14 @@ function AddSongs({ token, name, flash, onAdded }: { token: string; name: string
   const seq = useRef(0);
 
   useEffect(() => {
+    partyApi.library(token).then(setLibrary, () => setLibrary([]));
+  }, [token]);
+
+  useEffect(() => {
     const term = q.trim();
     if (term.length < 2) {
       setResults([]);
+      setBusy(false);
       return;
     }
     const id = window.setTimeout(async () => {
@@ -501,48 +565,106 @@ function AddSongs({ token, name, flash, onAdded }: { token: string; name: string
     return () => window.clearTimeout(id);
   }, [q, token]);
 
-  const add = async (r: SearchResult) => {
+  const add = async (song: { id: string; title: string } & Partial<SearchResult>, ready: boolean) => {
     try {
-      const { thumb: _t, status: _s, ...meta } = r;
-      await partyApi.add(token, meta, singer.trim());
-      setAdded((s) => new Set(s).add(r.id));
-      flash(r.status === "ready" ? `${r.title} is in the queue` : `${r.title} is in the queue and gets prepared now`);
+      const { thumb: _t, status: _s, ...meta } = song as SearchResult;
+      await partyApi.add(token, ready ? { id: song.id } : meta, singer.trim());
+      setAdded((s) => new Set(s).add(song.id));
+      flash(ready ? `${song.title} is in the queue` : `${song.title} is in the queue and gets prepared now`);
       onAdded();
     } catch (e) {
       flash((e as Error).message);
     }
   };
 
+  const term = fold(q.trim());
+  const libIds = new Set((library ?? []).map((s) => s.id));
+  const libShown = (library ?? [])
+    .filter((s) => !term || fold(`${s.title} ${s.artist} ${s.album}`).includes(term))
+    .sort((a, b) =>
+      sort === "az"
+        ? a.title.localeCompare(b.title)
+        : sort === "new"
+          ? b.created_at - a.created_at
+          : b.play_count - a.play_count || (b.last_played_at ?? 0) - (a.last_played_at ?? 0),
+    );
+  const webShown = results.filter((r) => !libIds.has(r.id));
+  const pickSort = (v: LibSort) => {
+    setSort(v);
+    store("encore.guest-sort", v);
+  };
+
+  const addButton = (id: string, onClick: () => void, label: string) => (
+    <button className={`btn add-btn ${added.has(id) ? "done" : "primary"}`} onClick={onClick} aria-label={label}>
+      <Icon name={added.has(id) ? "check" : "plus"} size={18} />
+    </button>
+  );
+
   return (
     <div className="add-songs">
       <div className="searchbar">
         <Icon name="search" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Song, artist or YouTube link" spellCheck={false} enterKeyHint="search" />
-        {busy && <span className="spinner" />}
+        {busy ? <span className="spinner" /> : q && (
+          <button className="icon-btn small" onClick={() => setQ("")} aria-label="Clear search"><Icon name="x" size={16} /></button>
+        )}
       </div>
-      <label className="singer-field">
-        <span className="muted small">Singer</span>
-        <input value={singer} onChange={(e) => setSinger(e.target.value)} maxLength={24} placeholder="Who sings it" />
+      <label className="singer-chip">
+        <Icon name="mic" size={16} />
+        <span>Singer</span>
+        <input value={singer} onChange={(e) => setSinger(e.target.value)} maxLength={24} placeholder={name} />
       </label>
       {error && <div className="alert">{error}</div>}
-      {!q && <p className="muted small">New songs take a minute or two to prepare (download and vocal separation). Songs from the library start right away.</p>}
+
+      {(libShown.length > 0 || !term) && (
+        <div className="list-head">
+          <h3>In the library <span className="muted">{library ? libShown.length : ""}</span></h3>
+          {!term && (library?.length ?? 0) > 1 && (
+            <div className="seg" role="tablist" aria-label="Sort">
+              {(["popular", "new", "az"] as LibSort[]).map((v) => (
+                <button key={v} className={sort === v ? "on" : ""} onClick={() => pickSort(v)} role="tab" aria-selected={sort === v}>
+                  {v === "popular" ? "Popular" : v === "new" ? "New" : "A–Z"}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {library === null && <div className="list-note"><span className="spinner" /></div>}
+      {library?.length === 0 && !term && <p className="muted small list-note">The library is empty. Search for a song and it gets prepared in a minute or two.</p>}
       <div className="results">
-        {results.map((r) => (
-          <div className="result" key={r.id}>
-            <img src={r.thumb} alt="" loading="lazy" />
+        {libShown.map((s) => (
+          <div className="result" key={s.id}>
+            <img src={s.cover || "/favicon.svg"} alt="" loading="lazy" />
             <div className="result-text">
-              <div className="result-title">{r.title}</div>
-              <div className="muted">{r.artist}{r.duration ? ` · ${fmtTime(r.duration)}` : ""}</div>
-              {r.status === "ready" && <div className="pill ready">In the library</div>}
+              <div className="result-title">{s.title}</div>
+              <div className="muted">{s.artist}{s.duration ? ` · ${fmtTime(s.duration)}` : ""}</div>
             </div>
-            <div className="result-actions">
-              <button className={`btn ${added.has(r.id) ? "" : "primary"}`} onClick={() => add(r)} aria-label={`Add ${r.title} to the queue`}>
-                <Icon name={added.has(r.id) ? "check" : "queue"} size={16} />
-              </button>
-            </div>
+            <div className="result-actions">{addButton(s.id, () => add(s, true), `Add ${s.title} to the queue`)}</div>
           </div>
         ))}
       </div>
+
+      {term.length >= 2 && (webShown.length > 0 || busy) && (
+        <>
+          <div className="list-head"><h3>From YouTube Music</h3></div>
+          <p className="muted small list-note">New songs take a minute or two to prepare (download and vocal separation).</p>
+          <div className="results">
+            {webShown.map((r) => (
+              <div className="result" key={r.id}>
+                <img src={r.thumb} alt="" loading="lazy" />
+                <div className="result-text">
+                  <div className="result-title">{r.title}</div>
+                  <div className="muted">{r.artist}{r.duration ? ` · ${fmtTime(r.duration)}` : ""}</div>
+                  {r.status && r.status !== "ready" && <div className={`pill ${r.status}`}>{r.status === "error" ? "Failed before, adding retries" : "Being prepared"}</div>}
+                </div>
+                <div className="result-actions">{addButton(r.id, () => add(r, false), `Add ${r.title} to the queue`)}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {term.length >= 2 && !busy && !libShown.length && !webShown.length && !error && <p className="muted list-note">Nothing found.</p>}
     </div>
   );
 }

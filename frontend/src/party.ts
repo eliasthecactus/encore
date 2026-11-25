@@ -5,9 +5,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BackgroundMode, QueueEntry, SearchResult, Song } from "./api";
 
+export type PartyRole = "admin" | "member";
+
 export interface PartyGuest {
   id: string;
   name: string;
+  role: PartyRole; // admin: controls the music too, member: queue only
   joined_at: number;
   online: boolean;
 }
@@ -42,6 +45,18 @@ export type Command =
   | { action: "background"; value: BackgroundMode };
 
 export type GuestQueueEntry = QueueEntry & { mine: boolean };
+
+export interface LibrarySong {
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  duration: number;
+  cover: string;
+  play_count: number;
+  last_played_at: number | null;
+  created_at: number;
+}
 
 export function formatCode(code: string): string {
   const d = code.replace(/\D/g, "").slice(0, 6);
@@ -92,6 +107,8 @@ export const partyApi = {
   newCode: (token: string) => call<PartyInfo>("POST", "/api/session/code", token),
   end: (token: string) => call("DELETE", "/api/session", token),
   kick: (token: string, id: string) => call<PartyInfo>("DELETE", `/api/session/guests/${id}`, token),
+  setRole: (token: string, id: string, role: PartyRole) =>
+    call<PartyInfo>("PUT", `/api/session/guests/${id}`, token, { role }),
   // guest
   join: (code: string, name: string) =>
     call<{ token: string; guest: PartyGuest }>("POST", "/api/session/join", null, { code, name }),
@@ -99,6 +116,7 @@ export const partyApi = {
     call<{ guest: PartyGuest; state: Partial<StageState>; host_online: boolean }>("GET", "/api/session/me", token),
   leave: (token: string) => call("POST", "/api/session/leave", token),
   queue: (token: string) => call<GuestQueueEntry[]>("GET", "/api/session/queue", token),
+  library: (token: string) => call<LibrarySong[]>("GET", "/api/session/library", token),
   search: (token: string, q: string) => call<SearchResult[]>("GET", `/api/session/search?q=${encodeURIComponent(q)}`, token),
   add: (token: string, r: Partial<SearchResult>, singer: string) =>
     call<{ id: number; song: Song }>("POST", "/api/session/queue", token, { ...r, singer }),
@@ -219,6 +237,7 @@ export interface HostParty {
   end: () => Promise<void>;
   newCode: () => Promise<void>;
   kick: (id: string) => Promise<void>;
+  setRole: (id: string, role: PartyRole) => Promise<void>;
   /** The stage sends its state here; throttled to what changed. */
   publish: (s: StageState) => void;
   /** The stage registers the handler for guest commands. */
@@ -316,6 +335,10 @@ export function useHostParty(onQueue: () => void): HostParty {
   }), [run, forget]);
   const newCode = useCallback(() => run(async (t) => setInfo(await partyApi.newCode(t))), [run]);
   const kick = useCallback((id: string) => run(async (t) => setInfo(await partyApi.kick(t, id))), [run]);
+  const setRole = useCallback(
+    (id: string, role: PartyRole) => run(async (t) => setInfo(await partyApi.setRole(t, id, role))),
+    [run],
+  );
 
   const publish = useCallback((s: StageState) => {
     const json = JSON.stringify(s);
@@ -327,5 +350,5 @@ export function useHostParty(onQueue: () => void): HostParty {
     handler.current = fn;
   }, []);
 
-  return { info, connected, error, start, end, newCode, kick, publish, setHandler };
+  return { info, connected, error, start, end, newCode, kick, setRole, publish, setHandler };
 }

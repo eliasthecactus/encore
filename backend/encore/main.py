@@ -442,6 +442,25 @@ async def party_kick(guest_id: str, request: Request):
     return p.info()
 
 
+class PartyRole(BaseModel):
+    role: str
+
+
+@app.put("/api/session/guests/{guest_id}")
+async def party_set_role(guest_id: str, body: PartyRole, request: Request):
+    p = _host(request)
+    g = p.guests.get(guest_id)
+    if not g:
+        raise HTTPException(404, "guest not found")
+    if body.role not in party.ROLES:
+        raise HTTPException(400, "role must be admin or member")
+    g.role = body.role
+    for c in list(g.conns):
+        c.send({"type": "role", "guest": g.public()})
+    p.guests_changed()
+    return p.info()
+
+
 class PartyJoin(BaseModel):
     code: str
     name: str
@@ -464,7 +483,9 @@ async def party_join(body: PartyJoin, request: Request):
         raise HTTPException(400, "Please enter your name")
     if len(p.guests) >= party.MAX_GUESTS:
         raise HTTPException(409, "This party is full")
-    g = party.Guest(id=secrets.token_hex(6), name=name, token=secrets.token_urlsafe(32))
+    g = party.Guest(id=secrets.token_hex(6), name=name, token=secrets.token_urlsafe(32),
+                    role="member" if p.had_guests else "admin")
+    p.had_guests = True
     p.guests[g.id] = g
     p.guests_changed()
     log.info("guest joined the party (%d guests)", len(p.guests))
@@ -496,6 +517,20 @@ async def party_queue(request: Request):
         out.append({k: it[k] for k in ("id", "song_id", "singer", "title", "artist", "cover", "status",
                                        "stage", "progress", "duration")}
                    | {"mine": it["id"] in g.entries, "guest": owner.name if owner else None})
+    return out
+
+
+@app.get("/api/session/library")
+async def party_library(request: Request):
+    """Songs that are ready to sing, for the guests' "Add song" list."""
+    _guest(request)
+    out = []
+    for s in db.list_songs():
+        if s["status"] != "ready":
+            continue
+        cover = f"/media/{s['id']}/cover.jpg" if s.get("has_cover") else thumb_url(s.get("thumbnail", ""), 240)
+        out.append({k: s[k] for k in ("id", "title", "artist", "album", "duration", "play_count",
+                                      "last_played_at", "created_at")} | {"cover": cover})
     return out
 
 

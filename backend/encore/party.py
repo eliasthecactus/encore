@@ -2,8 +2,9 @@
 
 One party at a time, kept in memory (a restart ends it). The stage that started the party is the
 host. It holds a host token, plays the music and publishes its state; guests hold guest tokens,
-add songs to the queue and send commands (play, pause, next, seek, vocals, volume, background)
-that the server relays to the host over a WebSocket.
+add songs to the queue and remove their own. Guests with the admin role (the first guest, or
+whom the host makes admin) also send commands (play, pause, next, seek, vocals, volume,
+background) that the server relays to the host over a WebSocket.
 
 Brute force: a code has 1'000'000 values. Wrong codes are limited per client address and, because
 an address can be faked behind a proxy, also across all clients together:
@@ -37,6 +38,7 @@ HOST_GONE_TTL = 4 * 3600  # a party whose stage has been offline this long ends
 STATE_MAX_BYTES = 4096
 
 BACKGROUNDS = ("aurora", "visualizer", "cover", "video", "custom")
+ROLES = ("admin", "member")  # the first guest of a party is admin, everyone after a member
 
 
 class RateLimiter:
@@ -124,12 +126,17 @@ class Guest:
     id: str
     name: str
     token: str
+    role: str = "member"  # "admin": controls the music too, "member": queue only
     joined_at: float = field(default_factory=time.time)
     conns: set[Conn] = field(default_factory=set)
     entries: set[int] = field(default_factory=set)  # queue entries this guest added
 
     def public(self) -> dict[str, Any]:
-        return {"id": self.id, "name": self.name, "joined_at": self.joined_at, "online": bool(self.conns)}
+        return {"id": self.id, "name": self.name, "role": self.role, "joined_at": self.joined_at, "online": bool(self.conns)}
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
 
 
 def new_code() -> str:
@@ -150,6 +157,7 @@ class Party:
         self.host_conns: set[Conn] = set()
         self.host_seen = time.time()
         self.state: dict[str, Any] = {}
+        self.had_guests = False  # the first guest becomes admin
 
     # ---- lookup ----
     def is_host(self, token: str) -> bool:
@@ -337,6 +345,9 @@ async def serve(ws: WebSocket) -> None:
                 if manager.guest_cmd.take(guest.id):
                     conn.send({"type": "error", "detail": "Slow down a little"})
                     continue
+                if not guest.is_admin:
+                    conn.send({"type": "error", "detail": "Only party admins can control the music"})
+                    continue
                 cmd = clean_command(msg)
                 if not cmd:
                     continue
@@ -359,5 +370,7 @@ async def serve(ws: WebSocket) -> None:
         else:
             p.host_conns.discard(conn)
             p.host_seen = time.time()
+            if p.state and not p.host_conns:
+                p.state = {**p.state, "playing": False}  # a closed or reloaded stage has stopped the music
             if manager.party is p:
                 p.to_guests(p.stage_message())

@@ -113,6 +113,10 @@ export function PartyPage({ party, online }: Props) {
       <h3 className="section-title">
         Guests <span className="muted">{info.guests.length || ""}</span>
       </h3>
+      <p className="muted small roles-note">
+        <b>Admins</b> control the music (play, pause, skip, jump, vocals, volume, background) and manage the queue like
+        members. <b>Members</b> add songs and remove their own. The first guest is admin, everyone after joins as member.
+      </p>
       {info.guests.length === 0 ? (
         <p className="muted">Nobody has joined yet.</p>
       ) : (
@@ -121,9 +125,18 @@ export function PartyPage({ party, online }: Props) {
             <div className="qrow" key={g.id}>
               <span className={`dot ${g.online ? "on" : ""}`} title={g.online ? "Connected" : "Not connected right now"} />
               <div className="grow">
-                <div className="qsinger">{g.name}</div>
+                <div className="qsinger">
+                  {g.name} <span className={`role-tag ${g.role}`}>{g.role === "admin" ? "Admin" : "Member"}</span>
+                </div>
                 <div className="muted small">joined {ago(g.joined_at)}</div>
               </div>
+              <button
+                className="btn small-btn"
+                onClick={() => party.setRole(g.id, g.role === "admin" ? "member" : "admin")}
+                title={g.role === "admin" ? "Can then only add songs and remove their own" : "Can then also control the music"}
+              >
+                {g.role === "admin" ? "Make member" : "Make admin"}
+              </button>
               <button
                 className="icon-btn small"
                 onClick={() => confirm(`Remove ${g.name} from the party?`) && party.kick(g.id)}
