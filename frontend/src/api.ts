@@ -64,6 +64,7 @@ export interface QueueEntry {
   stage: string;
   progress: number;
   duration: number;
+  guest?: string | null; // party guest who added it
 }
 
 export type BackgroundMode = "aurora" | "visualizer" | "cover" | "video" | "custom";

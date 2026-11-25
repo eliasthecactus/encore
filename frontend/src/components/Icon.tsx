@@ -31,10 +31,15 @@ const PATHS: Record<string, string> = {
   device: "M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1ZM11 18h2",
   cloudOff: "M7 18a4 4 0 0 1-.8-7.9A6 6 0 0 1 17.4 9M19.5 11.5A3.5 3.5 0 0 1 17 18H11M3 3l18 18",
   install: "M12 3v10M8 9l4 4 4-4M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3",
+  users: "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM3 20a6 6 0 0 1 12 0M16 4.3a3.5 3.5 0 0 1 0 6.4M18 14.3a6 6 0 0 1 3 5.7",
+  logout: "M10 4H5v16h5M14 8l4 4-4 4M18 12H9",
+  restart: "M5 5h2.5v14H5zM19 5.5v13L9.5 12z",
+  rewind: "M11 7v10l-7-5zM20 7v10l-7-5z",
+  forward: "M4 7v10l7-5zM13 7v10l7-5z",
 };
 
 export function Icon({ name, size = 20, className }: { name: keyof typeof PATHS | string; size?: number; className?: string }) {
-  const filled = name === "play" || name === "pause" || name === "next";
+  const filled = ["play", "pause", "next", "restart", "rewind", "forward"].includes(name);
   return (
     <svg
       className={className}

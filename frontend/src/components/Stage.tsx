@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, fmtTime, type Background as Bg, type BackgroundMode, type QueueEntry, type Settings, type SongDetail } from "../api";
 import { prefetchStems, StemPlayer } from "../audio";
 import { DEFAULT_PALETTE, paletteFrom, type RGB } from "../palette";
+import { formatCode, joinUrl, type Command, type StageState } from "../party";
 import { Background } from "./Background";
 import { Icon } from "./Icon";
 import { Lyrics } from "./Lyrics";
+import { QrCode } from "./QrCode";
 
 export interface NowPlaying {
   songId: string;
@@ -21,7 +23,16 @@ interface Props {
   onPlayNext: () => void; // take the next entry off the queue and play it
   onIdle: () => void;
   onChrome: (visible: boolean) => void;
+  /** Party mode: join code to show, state for the guests, commands from them. */
+  partyCode?: string | null;
+  onPublish?: (s: StageState) => void;
+  onRemote?: (fn: ((c: Command & { by: string }) => void) | null) => void;
 }
+
+const REMOTE_NOTE: Record<string, string> = {
+  toggle: "play / pause", play: "play", pause: "pause", next: "next song", restart: "from the start",
+  seek: "jump", skip: "jump", vocals: "vocals", volume: "volume", background: "background",
+};
 
 const BG_OPTIONS: { mode: BackgroundMode; icon: string; label: string }[] = [
   { mode: "aurora", icon: "sparkle", label: "Aurora" },
@@ -31,7 +42,7 @@ const BG_OPTIONS: { mode: BackgroundMode; icon: string; label: string }[] = [
   { mode: "custom", icon: "image", label: "Your background" },
 ];
 
-export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, onIdle, onChrome }: Props) {
+export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, onIdle, onChrome, partyCode, onPublish, onRemote }: Props) {
   const [song, setSong] = useState<SongDetail | null>(null);
   const [player, setPlayer] = useState<StemPlayer | null>(null);
   const [loadPct, setLoadPct] = useState(0);
@@ -47,6 +58,7 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
   const [ended, setEnded] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [blocked, setBlocked] = useState(false); // iOS wants a tap before it plays sound
+  const [remoteNote, setRemoteNote] = useState("");
   const prefetchedFor = useRef("");
   const offsetRef = useRef(0);
   const hideTimer = useRef<number>(0);
@@ -250,6 +262,102 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
 
   const lyricTime = useCallback(() => (player ? player.currentTime + offsetRef.current : 0), [player]);
 
+  const duration = player?.duration || song?.duration || 0;
+  const bgAvailable = BG_OPTIONS.filter(
+    (o) => !((o.mode === "video" && (!song?.video || !online)) || (o.mode === "custom" && (!custom || !online))),
+  ).map((o) => o.mode);
+
+  // ---- party: publish the state for the guests' remote, take their commands ----
+  const stateFor = useRef<() => StageState>(null!);
+  stateFor.current = () => ({
+    song: song ? { id: song.id, title: song.title, artist: song.artist, cover: song.cover } : null,
+    singer: now?.singer ?? "",
+    playing,
+    blocked,
+    loading: !!now && !player && !error,
+    pos: Math.round((player?.currentTime ?? 0) * 10) / 10,
+    duration: Math.round(duration * 10) / 10,
+    vocals,
+    volume,
+    bg,
+    bgAvailable,
+    countdown,
+    nextUp: nextUp ? { title: nextUp.title, singer: nextUp.singer } : null,
+  });
+  useEffect(() => {
+    if (!partyCode || !onPublish) return;
+    const push = () => onPublish(stateFor.current());
+    push();
+    const id = window.setInterval(push, 1000); // the position, and a resend after reconnects
+    return () => window.clearInterval(id);
+  }, [partyCode, onPublish, song, player, playing, blocked, vocals, volume, bg, countdown, nextUp?.id, error, now]);
+
+  const command = useRef<(c: Command & { by: string }) => void>(null!);
+  command.current = (c) => {
+    const startQueue = () => {
+      if (nextUp) {
+        setCountdown(null);
+        onPlayNext();
+      }
+    };
+    switch (c.action) {
+      case "toggle":
+      case "play":
+        if (!player) return now ? undefined : startQueue();
+        if (c.action === "toggle" || !player.playing || blocked) toggle();
+        break;
+      case "pause":
+        if (player?.playing) {
+          player.pause();
+          setPlaying(false);
+        }
+        break;
+      case "next":
+        startQueue();
+        break;
+      case "restart":
+        player?.seek(0);
+        setPos(0);
+        break;
+      case "seek":
+      case "skip":
+        if (player) {
+          player.seek(c.action === "seek" ? c.value : player.currentTime + c.value);
+          setPos(player.currentTime);
+        }
+        break;
+      case "vocals":
+        setVocals(c.value);
+        break;
+      case "volume":
+        setVolume(c.value);
+        break;
+      case "background":
+        if (bgAvailable.includes(c.value)) setBg(c.value);
+        break;
+    }
+    setRemoteNote(`${c.by}: ${REMOTE_NOTE[c.action] ?? c.action}`);
+  };
+  useEffect(() => {
+    if (!onRemote) return;
+    onRemote((c) => command.current(c));
+    return () => onRemote(null);
+  }, [onRemote]);
+  useEffect(() => {
+    if (!remoteNote) return;
+    const id = window.setTimeout(() => setRemoteNote(""), 2200);
+    return () => window.clearTimeout(id);
+  }, [remoteNote]);
+
+  const joinHint = partyCode ? (
+    <div className="join-pill">
+      <Icon name="users" size={16} />
+      <span>{joinUrl().replace(/^https?:\/\//, "")}</span>
+      <b>{formatCode(partyCode)}</b>
+    </div>
+  ) : null;
+  const note = remoteNote ? <div className="remote-note">{remoteNote}</div> : null;
+
   // ---- empty stage ----
   if (!now) {
     return (
@@ -258,6 +366,16 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
         <div className="stage-empty">
           <div className="hero-word">encore</div>
           <p>Pick a song from the library or search for one. Phones on the same network can open this page and add songs to the queue.</p>
+          {partyCode && (
+            <div className="party-join compact">
+              <QrCode text={`${joinUrl()}#${partyCode}`} size={132} />
+              <div className="party-join-text">
+                <div className="muted">Join the party at</div>
+                <div className="party-url">{joinUrl().replace(/^https?:\/\//, "")}</div>
+                <div className="party-code">{formatCode(partyCode)}</div>
+              </div>
+            </div>
+          )}
           {nextUp ? (
             <button className="btn primary big" onClick={onPlayNext}>
               <Icon name="play" /> Start the queue: {nextUp.title}
@@ -269,11 +387,11 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
             </button>
           )}
         </div>
+        {note}
       </div>
     );
   }
 
-  const duration = player?.duration || song?.duration || 0;
   const vocPct = Math.round(vocals * 100);
 
   return (
@@ -319,15 +437,19 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
               </div>
             </div>
           </div>
-          {nextUp && (
-            <div className="upnext">
-              <span className="muted">Up next</span>
-              <b>{nextUp.singer || "Someone"}</b>
-              <span>{nextUp.title}</span>
-            </div>
-          )}
+          <div className="stage-top-right">
+            {nextUp && (
+              <div className="upnext">
+                <span className="muted">Up next</span>
+                <b>{nextUp.singer || "Someone"}</b>
+                <span>{nextUp.title}</span>
+              </div>
+            )}
+            {joinHint}
+          </div>
         </div>
       )}
+      {note}
 
       {countdown !== null && nextUp && (
         <div className="countdown">
@@ -403,7 +525,7 @@ export function Stage({ now, online, settings, queue, backgrounds, onPlayNext, o
 
             <div className="group bgpick" title="Background (b)">
               {BG_OPTIONS.map((o) => {
-                const unavailable = (o.mode === "video" && (!song?.video || !online)) || (o.mode === "custom" && (!custom || !online));
+                const unavailable = !bgAvailable.includes(o.mode);
                 return (
                   <button
                     key={o.mode}

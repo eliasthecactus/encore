@@ -8,6 +8,6 @@ export default defineConfig({
   build: { outDir: "../backend/encore/static", emptyOutDir: true },
   server: {
     host: true,
-    proxy: { "/api": api, "/media": api, "/backgrounds": api },
+    proxy: { "/api": { target: api, ws: true }, "/media": api, "/backgrounds": api },
   },
 });

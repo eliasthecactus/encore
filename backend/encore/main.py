@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import hmac
 import logging
+import math
 import mimetypes
 import re
+import secrets
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,13 +19,13 @@ from urllib.parse import quote, urlparse
 import requests
 
 import yt_dlp
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from . import __version__, align, config, db, lyrics, ytm
+from . import __version__, align, config, db, lyrics, party, ytm
 from .worker import song_dir, worker
 
 # Slim images may lack /etc/mime.types; stems in .m4a should not be served as octet-stream.
@@ -134,8 +138,8 @@ class AddSong(BaseModel):
     singer: str | None = None  # also put it in the party queue
 
 
-@app.post("/api/songs")
-async def add_song(body: AddSong):
+async def _ensure_song(body: AddSong) -> dict[str, Any]:
+    """Add the song to the library (download + separation start in the background)."""
     raw = body.id or body.url or ""
     vid = ytm.parse_video_id(raw)  # also guarantees a safe folder name
     if not vid:
@@ -155,9 +159,16 @@ async def add_song(body: AddSong):
     elif existing["status"] == "error":
         db.update_song(vid, status="queued", progress=0, error="")
         worker.poke()
+    return db.get_song(vid) or {}
+
+
+@app.post("/api/songs")
+async def add_song(body: AddSong):
+    song = await _ensure_song(body)
     if body.singer is not None:
-        db.add_to_queue(vid, body.singer.strip())
-    return _public(db.get_song(vid))
+        db.add_to_queue(song["id"], body.singer.strip())
+        party.manager.notify_queue()
+    return _public(song)
 
 
 @app.get("/api/songs")
@@ -300,11 +311,20 @@ class QueueAdd(BaseModel):
     singer: str = ""
 
 
-@app.get("/api/queue")
-async def get_queue():
+def _queue_items() -> list[dict[str, Any]]:
     items = db.list_queue()
     for it in items:
         it["cover"] = f"/media/{it['song_id']}/cover.jpg" if it.get("has_cover") else thumb_url(it.get("thumbnail", ""), 240)
+    return items
+
+
+@app.get("/api/queue")
+async def get_queue():
+    items = _queue_items()
+    p = party.manager.current()
+    for it in items:
+        owner = p.owner_of(it["id"]) if p else None
+        it["guest"] = owner.name if owner else None
     return items
 
 
@@ -312,12 +332,14 @@ async def get_queue():
 async def queue_add(body: QueueAdd):
     _require(body.song_id)
     entry = db.add_to_queue(body.song_id, body.singer.strip())
+    party.manager.notify_queue()
     return {"id": entry}
 
 
 @app.delete("/api/queue/{entry_id}")
 async def queue_remove(entry_id: int):
     db.remove_from_queue(entry_id)
+    party.manager.notify_queue()
     return {"ok": True}
 
 
@@ -328,13 +350,194 @@ class QueueOrder(BaseModel):
 @app.put("/api/queue/order")
 async def queue_order(body: QueueOrder):
     db.reorder_queue(body.ids)
+    party.manager.notify_queue()
     return {"ok": True}
 
 
 @app.delete("/api/queue")
 async def queue_clear():
     db.clear_queue()
+    party.manager.notify_queue()
     return {"ok": True}
+
+
+# ---- party mode: guests join with a code ----------------------------------------
+
+def _bearer(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    return auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+
+
+def _host(request: Request) -> party.Party:
+    p = party.manager.current()
+    if not p or not p.is_host(_bearer(request)):
+        raise HTTPException(401, "not the host of the current party")
+    return p
+
+
+def _guest(request: Request) -> tuple[party.Party, party.Guest]:
+    p = party.manager.current()
+    g = p.guest_by_token(_bearer(request)) if p else None
+    if not p or not g:
+        raise HTTPException(401, "not part of the current party")
+    return p, g
+
+
+def _too_many(wait: float, what: str) -> HTTPException:
+    secs = max(1, math.ceil(wait))
+    when = f"{secs} s" if secs < 90 else f"{math.ceil(secs / 60)} min"
+    return HTTPException(429, f"{what} Try again in {when}.", headers={"Retry-After": str(secs)})
+
+
+class PartyStart(BaseModel):
+    force: bool = False  # end a party another stage is running
+
+
+@app.get("/api/session/status")
+async def party_status():
+    return {"active": party.manager.current() is not None}
+
+
+@app.post("/api/session")
+async def party_start(body: PartyStart, request: Request):
+    p = party.manager.current()
+    if p and p.is_host(_bearer(request)):
+        return {**p.info(), "host_token": p.host_token}
+    if p and not body.force:
+        raise HTTPException(409, "A party is already running on another screen")
+    p = await party.manager.start()
+    return {**p.info(), "host_token": p.host_token}
+
+
+@app.get("/api/session")
+async def party_info(request: Request):
+    return _host(request).info()
+
+
+@app.post("/api/session/code")
+async def party_new_code(request: Request):
+    p = _host(request)
+    p.code = party.new_code()
+    p.to_host({"type": "info", **p.info()})
+    return p.info()
+
+
+@app.delete("/api/session")
+async def party_end(request: Request):
+    _host(request)
+    await party.manager.stop()
+    return {"ok": True}
+
+
+@app.delete("/api/session/guests/{guest_id}")
+async def party_kick(guest_id: str, request: Request):
+    p = _host(request)
+    g = p.guests.pop(guest_id, None)
+    if g:
+        for c in list(g.conns):
+            c.send({"type": "ended", "reason": "removed"})
+            await c.close(4003)
+        g.conns.clear()
+        p.guests_changed()
+    return p.info()
+
+
+class PartyJoin(BaseModel):
+    code: str
+    name: str
+
+
+@app.post("/api/session/join")
+async def party_join(body: PartyJoin, request: Request):
+    ip = request.client.host if request.client else "unknown"
+    wait = party.manager.join_wait(ip)
+    if wait:
+        raise _too_many(wait, "Too many wrong codes.")
+    code = re.sub(r"\D", "", body.code)
+    p = party.manager.current()
+    if not p or len(code) != party.CODE_DIGITS or not hmac.compare_digest(code, p.code):
+        party.manager.join_failed(ip)
+        await asyncio.sleep(0.6)  # makes scripted guessing slower still
+        raise HTTPException(403, "This code does not match a running party")
+    name = party.clean_name(body.name)
+    if not name:
+        raise HTTPException(400, "Please enter your name")
+    if len(p.guests) >= party.MAX_GUESTS:
+        raise HTTPException(409, "This party is full")
+    g = party.Guest(id=secrets.token_hex(6), name=name, token=secrets.token_urlsafe(32))
+    p.guests[g.id] = g
+    p.guests_changed()
+    log.info("guest joined the party (%d guests)", len(p.guests))
+    return {"token": g.token, "guest": g.public()}
+
+
+@app.get("/api/session/me")
+async def party_me(request: Request):
+    p, g = _guest(request)
+    return {"guest": g.public(), "state": p.state, "host_online": p.host_online}
+
+
+@app.post("/api/session/leave")
+async def party_leave(request: Request):
+    p, g = _guest(request)
+    p.guests.pop(g.id, None)
+    for c in list(g.conns):
+        await c.close(4000)
+    p.guests_changed()
+    return {"ok": True}
+
+
+@app.get("/api/session/queue")
+async def party_queue(request: Request):
+    p, g = _guest(request)
+    out = []
+    for it in _queue_items():
+        owner = p.owner_of(it["id"])
+        out.append({k: it[k] for k in ("id", "song_id", "singer", "title", "artist", "cover", "status",
+                                       "stage", "progress", "duration")}
+                   | {"mine": it["id"] in g.entries, "guest": owner.name if owner else None})
+    return out
+
+
+@app.get("/api/session/search")
+async def party_search(q: str, request: Request):
+    _, g = _guest(request)
+    if wait := party.manager.guest_search.take(g.id):
+        raise _too_many(wait, "Too many searches.")
+    return await search(q, 20)
+
+
+class PartyAdd(AddSong):
+    pass
+
+
+@app.post("/api/session/queue")
+async def party_add(body: PartyAdd, request: Request):
+    p, g = _guest(request)
+    if wait := party.manager.guest_add.take(g.id):
+        raise _too_many(wait, "You added a lot of songs.")
+    song = await _ensure_song(body)
+    singer = party.clean_name(body.singer or "") or g.name
+    entry = db.add_to_queue(song["id"], singer)
+    g.entries.add(entry)
+    party.manager.notify_queue()
+    return {"id": entry, "song": _public(song)}
+
+
+@app.delete("/api/session/queue/{entry_id}")
+async def party_remove(entry_id: int, request: Request):
+    _, g = _guest(request)
+    if entry_id not in g.entries:
+        raise HTTPException(403, "You can only remove songs you added")
+    db.remove_from_queue(entry_id)
+    g.entries.discard(entry_id)
+    party.manager.notify_queue()
+    return {"ok": True}
+
+
+@app.websocket("/api/session/ws")
+async def party_socket(ws: WebSocket):
+    await party.serve(ws)
 
 
 # ---- settings & backgrounds --------------------------------------------------

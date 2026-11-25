@@ -3,18 +3,21 @@ import { api, type Background, type ConfigResponse, type QueueEntry, type Song }
 import { audioContext } from "./audio";
 import { Icon } from "./components/Icon";
 import { Library } from "./components/Library";
+import { PartyPage } from "./components/PartyPage";
 import { Queue } from "./components/Queue";
 import { Search } from "./components/Search";
 import { SettingsPage } from "./components/SettingsPage";
 import { Stage, type NowPlaying } from "./components/Stage";
 import { loadSaved, refreshSavedDetails, useOnline, useSaved, watchConnection } from "./offline";
+import { useHostParty } from "./party";
 
-type View = "stage" | "search" | "library" | "queue" | "settings";
+type View = "stage" | "search" | "library" | "queue" | "party" | "settings";
 const VIEWS: { id: View; label: string; icon: string }[] = [
   { id: "stage", label: "Stage", icon: "stage" },
   { id: "search", label: "Search", icon: "search" },
   { id: "library", label: "Library", icon: "library" },
   { id: "queue", label: "Queue", icon: "queue" },
+  { id: "party", label: "Party", icon: "users" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
 
@@ -60,6 +63,7 @@ export function App() {
   const refreshSongs = useCallback(() => api.songs().then(setSongs).catch(() => {}), []);
   const refreshQueue = useCallback(() => api.queue().then(setQueue).catch(() => {}), []);
   const refreshBackgrounds = useCallback(() => api.backgrounds().then(setBackgrounds).catch(() => {}), []);
+  const party = useHostParty(refreshQueue);
   const refresh = useCallback(() => {
     void refreshSongs();
     void refreshQueue();
@@ -172,6 +176,7 @@ export function App() {
               <span>{v.label}</span>
               {v.id === "queue" && queue.length > 0 && <span className="count">{queue.length}</span>}
               {v.id === "library" && working > 0 && <span className="count work">{working}</span>}
+              {v.id === "party" && party.info && (party.info.guests.length ? <span className="count">{party.info.guests.length}</span> : <span className="dot on" title="Party running" />)}
             </button>
           ))}
         </div>
@@ -189,6 +194,9 @@ export function App() {
             onPlayNext={playNext}
             onIdle={() => go("search")}
             onChrome={setChrome}
+            partyCode={party.info?.code ?? null}
+            onPublish={party.publish}
+            onRemote={party.setHandler}
           />
         </div>
         {view === "search" && <Search songs={songs} online={online} onPlay={(id) => play(id)} onChanged={refresh} askSinger={askSinger} />}
@@ -196,6 +204,7 @@ export function App() {
           <Library songs={songs} online={online} models={config.models} onPlay={(id) => play(id)} onChanged={refresh} askSinger={askSinger} onSearch={() => go("search")} />
         )}
         {view === "queue" && <Queue queue={queue} online={online} onChanged={refresh} onStart={playNext} onSearch={() => go("search")} />}
+        {view === "party" && <PartyPage party={party} online={online} />}
         {view === "settings" && (
           <SettingsPage config={config} backgrounds={backgrounds} onSaved={setConfig} onBackgrounds={refreshBackgrounds} />
         )}

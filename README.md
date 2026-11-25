@@ -9,6 +9,7 @@ Self-hosted karaoke for any song. Search YouTube Music, and Encore downloads the
 - **Word timing**: LRC files only time whole lines, often for a slightly different release. Encore aligns every word on the separated vocal track (torchaudio's MMS_FA model, CPU is fine, about 20 to 60 s per song), so the fill follows the singer and rests in pauses. Lines it is unsure about keep the LRC time, and plain lyrics without timestamps get synced the same way. Latin-script lyrics only for now.
 - **Backgrounds**: aurora (colours taken from the cover), audio visualizer, cover art, the official music video (muted, synced), or your own uploaded image or video.
 - **Party queue**: phones on the same network open the same page, search, and line up with their name. The TV shows who's next and counts down.
+- **Party mode**: start a party on the big screen and friends join from their phones at `/join` with a 6 digit code (or the QR code). Guests add songs and control the stage: play, pause, skip, jump, vocals, volume and background. See [Party mode](#party-mode).
 - **Everything stays local**: processed songs live in a mounted folder, settings in `config.json`, data in SQLite. A song is prepared once and starts instantly after that.
 
 ## Run it
@@ -108,6 +109,16 @@ Then:
 
 **Offline**: the app itself and the last known library open without a connection. Songs you save with "Save on this device" (song menu in the library) play fully offline, stems, cover, lyrics and word timing included, about 15 MB per song. Search, the queue and settings need the connection to Encore. Settings > This device shows what is stored and removes it.
 
+### Party mode
+
+On the screen that plays the music, open **Party** and start a party. It shows a QR code, the join address (`https://<your-encore>/join`) and a code like `482 913`. Guests enter the code and their name and get a remote for the stage, the queue (they can remove the songs they added) and a search to add songs. The host sees who joined and can remove guests, make a new code (earlier codes stop working, guests who joined stay) or end the party. A party lives in memory: restarting Encore ends it.
+
+Wrong codes are rate limited: 5 per 5 minutes per client address and 30 per 10 minutes across all clients (the second limit holds even if addresses are faked). That allows about 180 guesses an hour out of 1'000'000 codes; when the global limit is reached, joining pauses until the window frees up, guests who already joined are not affected.
+
+Guest control goes over a WebSocket at `/api/session/ws`, so a reverse proxy must pass WebSockets through (Caddy and Traefik do by default, in Nginx Proxy Manager switch on "Websockets Support"). For the per address limit the proxy should send `X-Forwarded-For`.
+
+Note that the code only protects the party. The rest of Encore (library, settings, the regular queue) has no login, so anyone who can reach the server can use it. Keep it on your own network or behind a proxy with authentication if it is reachable from the internet.
+
 ### How long does a song take?
 
 Download a few seconds, separation depends on the CPU: roughly 30 to 60 seconds for a 4 minute song on a recent desktop or Apple Silicon CPU, a few minutes on a small NAS or Raspberry Pi class device. With an NVIDIA GPU it is a few seconds. Songs are processed one after another, the library shows progress.
@@ -153,7 +164,7 @@ cd frontend && npm install && npm run dev
 
 `npm run build` writes the web app into `backend/encore/static`, which the backend serves.
 
-Layout: `backend/encore` (FastAPI app: `main.py` routes, `worker.py` job pipeline, `ytm.py` YouTube Music, `lyrics.py` LRCLIB and LRC parsing, `align.py` word timing on the vocal stem, `db.py` SQLite, `config.py` settings), `frontend/src` (React + Vite: `audio.ts` stem player, `components/Stage.tsx` player, `Lyrics.tsx`, `Background.tsx`).
+Layout: `backend/encore` (FastAPI app: `main.py` routes, `worker.py` job pipeline, `ytm.py` YouTube Music, `lyrics.py` LRCLIB and LRC parsing, `align.py` word timing on the vocal stem, `party.py` party mode sessions, rate limits and WebSocket, `separate.py` Demucs runner, `db.py` SQLite, `config.py` settings), `frontend/src` (React + Vite: `audio.ts` stem player, `components/Stage.tsx` player, `Lyrics.tsx`, `Background.tsx`, `party.ts` party client, `components/PartyPage.tsx` host view, `guest/GuestApp.tsx` the phone remote at `/join`).
 
 Releases: pushing to `main` publishes `ghcr.io/<owner>/encore:edge`, a `v1.2.3` tag publishes `1.2.3`, `1.2` and `latest` ([workflow](.github/workflows/release.yml)).
 
